@@ -47,6 +47,8 @@ type config struct {
 	SSHPort              uint          `mapstructure:"ssh_port"`
 	SSHUser              string        `mapstructure:"ssh_username"`
 	SSHWaitTimeout       time.Duration ``
+	SysRescURL           string        `mapstructure:"sysresc_url"`
+	SysRescMD5           string        `mapstructure:"sysresc_md5"`
 	VBoxVersionFile      string        `mapstructure:"virtualbox_version_file"`
 	VBoxManage           [][]string    `mapstructure:"vboxmanage"`
 	VMName               string        `mapstructure:"vm_name"`
@@ -264,6 +266,7 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 	steps := []multistep.Step{
 		new(stepDownloadGuestAdditions),
 		new(stepDownloadISO),
+		new(stepDownloadSysResc),
 		new(stepPrepareOutputDir),
 		new(stepHTTPServer),
 		new(stepSuppressMessages),
