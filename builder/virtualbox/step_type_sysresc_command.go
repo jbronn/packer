@@ -35,7 +35,7 @@ func (s *stepTypeSysRescCommand) Run(state map[string]interface{}) multistep.Ste
 		config.VMName,
 	}
 
-	ui.Say("Typing the boot command...")
+	ui.Say("Typing the System Rescue CD command...")
 	for _, command := range config.SysRescCommand {
 		var buf bytes.Buffer
 		t := template.Must(template.New("boot").Parse(command))
@@ -64,7 +64,7 @@ func (s *stepTypeSysRescCommand) Run(state map[string]interface{}) multistep.Ste
 			}
 
 			if err := driver.VBoxManage("controlvm", vmName, "keyboardputscancode", code); err != nil {
-				err := fmt.Errorf("Error sending boot command: %s", err)
+				err := fmt.Errorf("Error sending System Rescue CD command: %s", err)
 				state["error"] = err
 				ui.Error(err.Error())
 				return multistep.ActionHalt

@@ -31,6 +31,17 @@ func (s *stepExport) Run(state map[string]interface{}) multistep.StepAction {
 		return multistep.ActionHalt
 	}
 
+	// Ensure hard disk is primary boot device.
+	command = []string{
+		"modifyvm", vmName,
+		"--boot1", "disk",
+	}
+
+	if err := driver.VBoxManage(command...); err != nil {
+		ui.Error(fmt.Sprintf("Error making hard disk first in boot order: %s", err))
+		return multistep.ActionHalt
+	}
+
 	// Export the VM to an OVF
 	outputPath := filepath.Join(config.OutputDir, "packer.ovf")
 
