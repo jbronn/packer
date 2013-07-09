@@ -47,6 +47,7 @@ type config struct {
 	SSHPort              uint          `mapstructure:"ssh_port"`
 	SSHUser              string        `mapstructure:"ssh_username"`
 	SSHWaitTimeout       time.Duration ``
+	SysRescCommand       []string      `mapstructure:"sysresc_command"`
 	SysRescURL           string        `mapstructure:"sysresc_url"`
 	SysRescMD5           string        `mapstructure:"sysresc_md5"`
 	VBoxVersionFile      string        `mapstructure:"virtualbox_version_file"`
@@ -174,6 +175,51 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		}
 	}
 
+	if b.config.SysRescMD5 == "" {
+		errs = append(errs, errors.New("Due to large file sizes, an sysresc_md5 is required"))
+	} else {
+		b.config.SysRescMD5 = strings.ToLower(b.config.SysRescMD5)
+	}
+
+	if b.config.SysRescURL == "" {
+		errs = append(errs, errors.New("A sysresc_url must be specified."))
+	} else {
+		url, err := url.Parse(b.config.SysRescURL)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("sysresc_url is not a valid URL: %s", err))
+		} else {
+			if url.Scheme == "" {
+				url.Scheme = "file"
+			}
+
+			if url.Scheme == "file" {
+				if _, err := os.Stat(url.Path); err != nil {
+					errs = append(errs, fmt.Errorf("sysresc_url points to bad file: %s", err))
+				}
+			} else {
+				supportedSchemes := []string{"file", "http", "https"}
+				scheme := strings.ToLower(url.Scheme)
+
+				found := false
+				for _, supported := range supportedSchemes {
+					if scheme == supported {
+						found = true
+						break
+					}
+				}
+
+				if !found {
+					errs = append(errs, fmt.Errorf("Unsupported URL scheme in sysresc_url: %s", scheme))
+				}
+			}
+		}
+
+		if len(errs) == 0 {
+			// Put the URL back together since we may have modified it
+			b.config.SysRescURL = url.String()
+		}
+	}
+
 	if b.config.GuestAdditionsSHA256 != "" {
 		b.config.GuestAdditionsSHA256 = strings.ToLower(b.config.GuestAdditionsSHA256)
 	}
@@ -282,6 +328,9 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		new(stepUploadGuestAdditions),
 		new(stepProvision),
 		new(stepShutdown),
+		new(stepAttachSysResc),
+		new(stepRun),
+		new(stepTypeSysRescCommand),
 		new(stepExport),
 	}
 

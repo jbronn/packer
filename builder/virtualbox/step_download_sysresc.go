@@ -55,7 +55,7 @@ func (s *stepDownloadSysResc) Run(state map[string]interface{}) multistep.StepAc
 
 	downloadCompleteCh := make(chan error, 1)
 	go func() {
-		ui.Say("Copying or downloading ISO. Progress will be reported periodically.")
+		ui.Say("Copying or downloading System Rescue CD. Progress will be reported periodically.")
 		cachePath, err = download.Get()
 		downloadCompleteCh <- err
 	}()
