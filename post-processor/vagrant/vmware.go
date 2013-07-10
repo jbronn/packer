@@ -82,7 +82,7 @@ func (p *VMwareBoxPostProcessor) PostProcess(ui packer.Ui, artifact packer.Artif
 	}
 
 	// Create the metadata
-	metadata := map[string]string{"provider": "vmware_desktop"}
+	metadata := map[string]string{"provider": "vmware_fusion"}
 	if err := WriteMetadata(dir, metadata); err != nil {
 		return nil, false, err
 	}
