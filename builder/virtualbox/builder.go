@@ -28,6 +28,7 @@ type config struct {
 	BootCommand          []string      `mapstructure:"boot_command"`
 	BootWait             time.Duration ``
 	DiskSize             uint          `mapstructure:"disk_size"`
+	FloppyFiles          []string      `mapstructure:"floppy_files"`
 	GuestAdditionsPath   string        `mapstructure:"guest_additions_path"`
 	GuestAdditionsURL    string        `mapstructure:"guest_additions_url"`
 	GuestAdditionsSHA256 string        `mapstructure:"guest_additions_sha256"`
@@ -74,6 +75,10 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 
 	if b.config.DiskSize == 0 {
 		b.config.DiskSize = 40000
+	}
+
+	if b.config.FloppyFiles == nil {
+		b.config.FloppyFiles = make([]string, 0)
 	}
 
 	if b.config.GuestAdditionsPath == "" {
@@ -314,11 +319,15 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		new(stepDownloadISO),
 		new(stepDownloadSysResc),
 		new(stepPrepareOutputDir),
+		&common.StepCreateFloppy{
+			Files: b.config.FloppyFiles,
+		},
 		new(stepHTTPServer),
 		new(stepSuppressMessages),
 		new(stepCreateVM),
 		new(stepCreateDisk),
 		new(stepAttachISO),
+		new(stepAttachFloppy),
 		new(stepForwardSSH),
 		new(stepVBoxManage),
 		new(stepRun),

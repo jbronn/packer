@@ -28,6 +28,7 @@ type Builder struct {
 type config struct {
 	DiskName          string            `mapstructure:"vmdk_name"`
 	DiskSize          uint              `mapstructure:"disk_size"`
+	FloppyFiles       []string          `mapstructure:"floppy_files"`
 	GuestOSType       string            `mapstructure:"guest_os_type"`
 	ISOMD5            string            `mapstructure:"iso_md5"`
 	ISOUrl            string            `mapstructure:"iso_url"`
@@ -77,6 +78,10 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 
 	if b.config.DiskSize == 0 {
 		b.config.DiskSize = 40000
+	}
+
+	if b.config.FloppyFiles == nil {
+		b.config.FloppyFiles = make([]string, 0)
 	}
 
 	if b.config.GuestOSType == "" {
@@ -279,6 +284,9 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		&stepDownloadISO{},
 		&stepDownloadSysResc{},
 		&stepPrepareOutputDir{},
+		&common.StepCreateFloppy{
+			Files: b.config.FloppyFiles,
+		},
 		&stepCreateDisk{},
 		&stepCreateVMX{},
 		&stepHTTPServer{},
@@ -293,6 +301,7 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		&stepRun{},
 		&stepTypeSysRescCommand{},
 		&stepCleanFiles{},
+		&stepCleanVMX{},
 		&stepCompactDisk{},
 	}
 
