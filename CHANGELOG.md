@@ -2,11 +2,16 @@
 
 FEATURES:
 
+* Amazon EBS builder can now optionally use a pre-made security group
+  instead of randomly generating one.
+* DigitalOcean API key and client IDs can now be passed in as
+  environmental variables. See the documentatin for more details.
 * VirtualBox and VMware can now have `floppy_files` specified to attach
   floppy disks when booting. This allows for unattended Windows installs.
 
 IMPROVEMENTS:
 
+* amazon-ebs: Verify the source AMI is EBS-backed before launching. [GH-169]
 * vmware: error if shutdown command has non-zero exit status.
 
 BUG FIXES:
