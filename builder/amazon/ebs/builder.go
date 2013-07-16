@@ -3,7 +3,7 @@
 //
 // In general, there are two types of AMIs that can be created: ebs-backed or
 // instance-store. This builder _only_ builds ebs-backed images.
-package amazonebs
+package ebs
 
 import (
 	"errors"
@@ -15,7 +15,8 @@ import (
 	"github.com/mitchellh/packer/builder/common"
 	"github.com/mitchellh/packer/packer"
 	"log"
-	"os"
+	"sort"
+	"strings"
 	"text/template"
 	"time"
 )
@@ -34,7 +35,6 @@ type config struct {
 	InstanceType    string `mapstructure:"instance_type"`
 	SSHUsername     string `mapstructure:"ssh_username"`
 	SSHPort         int    `mapstructure:"ssh_port"`
-	SSHTimeout      time.Duration
 	SecurityGroupId string `mapstructure:"security_group_id"`
 
 	// Configuration of the resulting AMI
@@ -42,6 +42,9 @@ type config struct {
 
 	PackerDebug   bool   `mapstructure:"packer_debug"`
 	RawSSHTimeout string `mapstructure:"ssh_timeout"`
+
+	// Unexported fields that are calculated from others
+	sshTimeout time.Duration
 }
 
 type Builder struct {
@@ -50,29 +53,36 @@ type Builder struct {
 }
 
 func (b *Builder) Prepare(raws ...interface{}) error {
-	var err error
+	var md mapstructure.Metadata
+	decoderConfig := &mapstructure.DecoderConfig{
+		Metadata: &md,
+		Result:   &b.config,
+	}
+
+	decoder, err := mapstructure.NewDecoder(decoderConfig)
+	if err != nil {
+		return err
+	}
 
 	for _, raw := range raws {
-		err := mapstructure.Decode(raw, &b.config)
+		err := decoder.Decode(raw)
 		if err != nil {
 			return err
 		}
 	}
 
-	if b.config.AccessKey == "" {
-		b.config.AccessKey = os.Getenv("AWS_ACCESS_KEY_ID")
-	}
+	// Accumulate any errors
+	errs := make([]error, 0)
 
-	if b.config.AccessKey == "" {
-		b.config.AccessKey = os.Getenv("AWS_ACCESS_KEY")
-	}
-
-	if b.config.SecretKey == "" {
-		b.config.SecretKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
-	}
-
-	if b.config.SecretKey == "" {
-		b.config.SecretKey = os.Getenv("AWS_SECRET_KEY")
+	// Unused keys are errors
+	if len(md.Unused) > 0 {
+		sort.Strings(md.Unused)
+		for _, unused := range md.Unused {
+			if unused != "type" && !strings.HasPrefix(unused, "packer_") {
+				errs = append(
+					errs, fmt.Errorf("Unknown configuration key: %s", unused))
+			}
+		}
 	}
 
 	if b.config.SSHPort == 0 {
@@ -84,16 +94,6 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 	}
 
 	// Accumulate any errors
-	errs := make([]error, 0)
-
-	if b.config.AccessKey == "" {
-		errs = append(errs, errors.New("An access_key must be specified"))
-	}
-
-	if b.config.SecretKey == "" {
-		errs = append(errs, errors.New("A secret_key must be specified"))
-	}
-
 	if b.config.SourceAmi == "" {
 		errs = append(errs, errors.New("A source_ami must be specified"))
 	}
@@ -112,7 +112,7 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		errs = append(errs, errors.New("An ssh_username must be specified"))
 	}
 
-	b.config.SSHTimeout, err = time.ParseDuration(b.config.RawSSHTimeout)
+	b.config.sshTimeout, err = time.ParseDuration(b.config.RawSSHTimeout)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("Failed parsing ssh_timeout: %s", err))
 	}
@@ -140,7 +140,11 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		panic("region not found")
 	}
 
-	auth := aws.Auth{b.config.AccessKey, b.config.SecretKey}
+	auth, err := aws.GetAuth(b.config.AccessKey, b.config.SecretKey)
+	if err != nil {
+		return nil, err
+	}
+
 	ec2conn := ec2.New(auth, region)
 
 	// Setup the state bag and initial state for the steps
@@ -155,8 +159,12 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		&stepKeyPair{},
 		&stepSecurityGroup{},
 		&stepRunSourceInstance{},
-		&stepConnectSSH{},
-		&stepProvision{},
+		&common.StepConnectSSH{
+			SSHAddress:     sshAddress,
+			SSHConfig:      sshConfig,
+			SSHWaitTimeout: b.config.sshTimeout,
+		},
+		&common.StepProvision{},
 		&stepStopInstance{},
 		&stepCreateAMI{},
 	}

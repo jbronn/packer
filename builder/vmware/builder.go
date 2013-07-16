@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -30,7 +31,8 @@ type config struct {
 	DiskSize          uint              `mapstructure:"disk_size"`
 	FloppyFiles       []string          `mapstructure:"floppy_files"`
 	GuestOSType       string            `mapstructure:"guest_os_type"`
-	ISOMD5            string            `mapstructure:"iso_md5"`
+	ISOChecksum       string            `mapstructure:"iso_checksum"`
+	ISOChecksumType   string            `mapstructure:"iso_checksum_type"`
 	ISOUrl            string            `mapstructure:"iso_url"`
 	VMName            string            `mapstructure:"vm_name"`
 	OutputDir         string            `mapstructure:"output_directory"`
@@ -39,14 +41,11 @@ type config struct {
 	HTTPPortMin       uint              `mapstructure:"http_port_min"`
 	HTTPPortMax       uint              `mapstructure:"http_port_max"`
 	BootCommand       []string          `mapstructure:"boot_command"`
-	BootWait          time.Duration     ``
 	SkipCompaction    bool              `mapstructure:"skip_compaction"`
 	ShutdownCommand   string            `mapstructure:"shutdown_command"`
-	ShutdownTimeout   time.Duration     ``
 	SSHUser           string            `mapstructure:"ssh_username"`
 	SSHPassword       string            `mapstructure:"ssh_password"`
 	SSHPort           uint              `mapstructure:"ssh_port"`
-	SSHWaitTimeout    time.Duration     ``
 	SysRescCommand    []string          `mapstructure:"sysresc_command"`
 	SysRescURL        string            `mapstructure:"sysresc_url"`
 	SysRescMD5        string            `mapstructure:"sysresc_md5"`
@@ -58,17 +57,47 @@ type config struct {
 
 	PackerBuildName string `mapstructure:"packer_build_name"`
 	PackerDebug     bool   `mapstructure:"packer_debug"`
+	PackerForce     bool   `mapstructure:"packer_force"`
 
 	RawBootWait        string `mapstructure:"boot_wait"`
 	RawShutdownTimeout string `mapstructure:"shutdown_timeout"`
 	RawSSHWaitTimeout  string `mapstructure:"ssh_wait_timeout"`
+
+	bootWait        time.Duration ``
+	shutdownTimeout time.Duration ``
+	sshWaitTimeout  time.Duration ``
 }
 
 func (b *Builder) Prepare(raws ...interface{}) error {
+	var md mapstructure.Metadata
+	decoderConfig := &mapstructure.DecoderConfig{
+		Metadata: &md,
+		Result:   &b.config,
+	}
+
+	decoder, err := mapstructure.NewDecoder(decoderConfig)
+	if err != nil {
+		return err
+	}
+
 	for _, raw := range raws {
-		err := mapstructure.Decode(raw, &b.config)
+		err := decoder.Decode(raw)
 		if err != nil {
 			return err
+		}
+	}
+
+	// Accumulate any errors
+	errs := make([]error, 0)
+
+	// Unused keys are errors
+	if len(md.Unused) > 0 {
+		sort.Strings(md.Unused)
+		for _, unused := range md.Unused {
+			if unused != "type" && !strings.HasPrefix(unused, "packer_") {
+				errs = append(
+					errs, fmt.Errorf("Unknown configuration key: %s", unused))
+			}
 		}
 	}
 
@@ -124,18 +153,25 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		b.config.ToolsUploadPath = "{{ .Flavor }}.iso"
 	}
 
-	// Accumulate any errors
-	var err error
-	errs := make([]error, 0)
-
 	if b.config.HTTPPortMin > b.config.HTTPPortMax {
 		errs = append(errs, errors.New("http_port_min must be less than http_port_max"))
 	}
 
-	if b.config.ISOMD5 == "" {
-		errs = append(errs, errors.New("Due to large file sizes, an iso_md5 is required"))
+	if b.config.ISOChecksum == "" {
+		errs = append(errs, errors.New("Due to large file sizes, an iso_checksum is required"))
 	} else {
-		b.config.ISOMD5 = strings.ToLower(b.config.ISOMD5)
+		b.config.ISOChecksum = strings.ToLower(b.config.ISOChecksum)
+	}
+
+	if b.config.ISOChecksumType == "" {
+		errs = append(errs, errors.New("The iso_checksum_type must be specified."))
+	} else {
+		b.config.ISOChecksumType = strings.ToLower(b.config.ISOChecksumType)
+		if h := common.HashForType(b.config.ISOChecksumType); h == nil {
+			errs = append(
+				errs,
+				fmt.Errorf("Unsupported checksum type: %s", b.config.ISOChecksumType))
+		}
 	}
 
 	if b.config.ISOUrl == "" {
@@ -222,8 +258,13 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		}
 	}
 
-	if _, err := os.Stat(b.config.OutputDir); err == nil {
-		errs = append(errs, errors.New("Output directory already exists. It must not exist."))
+
+	if !b.config.PackerForce {
+		if _, err := os.Stat(b.config.OutputDir); err == nil {
+			errs = append(
+				errs,
+				errors.New("Output directory already exists. It must not exist."))
+		}
 	}
 
 	if b.config.SSHUser == "" {
@@ -231,7 +272,7 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 	}
 
 	if b.config.RawBootWait != "" {
-		b.config.BootWait, err = time.ParseDuration(b.config.RawBootWait)
+		b.config.bootWait, err = time.ParseDuration(b.config.RawBootWait)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("Failed parsing boot_wait: %s", err))
 		}
@@ -241,7 +282,7 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		b.config.RawShutdownTimeout = "5m"
 	}
 
-	b.config.ShutdownTimeout, err = time.ParseDuration(b.config.RawShutdownTimeout)
+	b.config.shutdownTimeout, err = time.ParseDuration(b.config.RawShutdownTimeout)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("Failed parsing shutdown_timeout: %s", err))
 	}
@@ -250,7 +291,7 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		b.config.RawSSHWaitTimeout = "20m"
 	}
 
-	b.config.SSHWaitTimeout, err = time.ParseDuration(b.config.RawSSHWaitTimeout)
+	b.config.sshWaitTimeout, err = time.ParseDuration(b.config.RawSSHWaitTimeout)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("Failed parsing ssh_wait_timeout: %s", err))
 	}
@@ -293,9 +334,13 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		&stepConfigureVNC{},
 		&stepRun{},
 		&stepTypeBootCommand{},
-		&stepWaitForSSH{},
+		&common.StepConnectSSH{
+			SSHAddress:     sshAddress,
+			SSHConfig:      sshConfig,
+			SSHWaitTimeout: b.config.sshWaitTimeout,
+		},
 		&stepUploadTools{},
-		&stepProvision{},
+		&common.StepProvision{},
 		&stepShutdown{},
 		&stepAttachSysResc{},
 		&stepRun{},

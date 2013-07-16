@@ -11,9 +11,10 @@ import (
 
 func testConfig() map[string]interface{} {
 	return map[string]interface{}{
-		"iso_md5":      "foo",
-		"iso_url":      "http://www.packer.io",
-		"ssh_username": "foo",
+		"iso_checksum":      "foo",
+		"iso_checksum_type": "md5",
+		"iso_url":           "http://www.packer.io",
+		"ssh_username":      "foo",
 
 		packer.BuildNameConfigKey: "foo",
 	}
@@ -57,6 +58,58 @@ func TestBuilderPrepare_BootWait(t *testing.T) {
 	}
 }
 
+func TestBuilderPrepare_ISOChecksum(t *testing.T) {
+	var b Builder
+	config := testConfig()
+
+	// Test bad
+	config["iso_checksum"] = ""
+	err := b.Prepare(config)
+	if err == nil {
+		t.Fatal("should have error")
+	}
+
+	// Test good
+	config["iso_checksum"] = "FOo"
+	err = b.Prepare(config)
+	if err != nil {
+		t.Fatalf("should not have error: %s", err)
+	}
+
+	if b.config.ISOChecksum != "foo" {
+		t.Fatalf("should've lowercased: %s", b.config.ISOChecksum)
+	}
+}
+
+func TestBuilderPrepare_ISOChecksumType(t *testing.T) {
+	var b Builder
+	config := testConfig()
+
+	// Test bad
+	config["iso_checksum_type"] = ""
+	err := b.Prepare(config)
+	if err == nil {
+		t.Fatal("should have error")
+	}
+
+	// Test good
+	config["iso_checksum_type"] = "mD5"
+	err = b.Prepare(config)
+	if err != nil {
+		t.Fatalf("should not have error: %s", err)
+	}
+
+	if b.config.ISOChecksumType != "md5" {
+		t.Fatalf("should've lowercased: %s", b.config.ISOChecksumType)
+	}
+
+	// Test unknown
+	config["iso_checksum_type"] = "fake"
+	err = b.Prepare(config)
+	if err == nil {
+		t.Fatal("should have error")
+	}
+}
 func TestBuilderPrepare_Defaults(t *testing.T) {
 	var b Builder
 	config := testConfig()
@@ -73,8 +126,8 @@ func TestBuilderPrepare_Defaults(t *testing.T) {
 		t.Errorf("bad output dir: %s", b.config.OutputDir)
 	}
 
-	if b.config.SSHWaitTimeout != (20 * time.Minute) {
-		t.Errorf("bad wait timeout: %s", b.config.SSHWaitTimeout)
+	if b.config.sshWaitTimeout != (20 * time.Minute) {
+		t.Errorf("bad wait timeout: %s", b.config.sshWaitTimeout)
 	}
 
 	if b.config.VMName != "packer-foo" {
@@ -163,26 +216,15 @@ func TestBuilderPrepare_HTTPPort(t *testing.T) {
 	}
 }
 
-func TestBuilderPrepare_ISOMD5(t *testing.T) {
+func TestBuilderPrepare_InvalidKey(t *testing.T) {
 	var b Builder
 	config := testConfig()
 
-	// Test bad
-	config["iso_md5"] = ""
+	// Add a random key
+	config["i_should_not_be_valid"] = true
 	err := b.Prepare(config)
 	if err == nil {
 		t.Fatal("should have error")
-	}
-
-	// Test good
-	config["iso_md5"] = "FOo"
-	err = b.Prepare(config)
-	if err != nil {
-		t.Fatalf("should not have error: %s", err)
-	}
-
-	if b.config.ISOMD5 != "foo" {
-		t.Fatalf("should've lowercased: %s", b.config.ISOMD5)
 	}
 }
 
