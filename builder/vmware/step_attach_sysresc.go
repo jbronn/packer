@@ -20,6 +20,10 @@ type stepAttachSysResc struct{}
 
 func (stepAttachSysResc) Run(state map[string]interface{}) multistep.StepAction {
 	isoPath := state["sysresc_path"].(string)
+	if isoPath == "" {
+		return multistep.ActionContinue
+	}
+
 	ui := state["ui"].(packer.Ui)
 	vmxPath := state["vmx_path"].(string)
 
@@ -61,5 +65,4 @@ func (stepAttachSysResc) Run(state map[string]interface{}) multistep.StepAction 
 	return multistep.ActionContinue
 }
 
-func (stepAttachSysResc) Cleanup(map[string]interface{}) {
-}
+func (stepAttachSysResc) Cleanup(map[string]interface{}) {}

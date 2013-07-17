@@ -46,9 +46,6 @@ type config struct {
 	SSHUser           string            `mapstructure:"ssh_username"`
 	SSHPassword       string            `mapstructure:"ssh_password"`
 	SSHPort           uint              `mapstructure:"ssh_port"`
-	SysRescCommand    []string          `mapstructure:"sysresc_command"`
-	SysRescURL        string            `mapstructure:"sysresc_url"`
-	SysRescMD5        string            `mapstructure:"sysresc_md5"`
 	ToolsUploadFlavor string            `mapstructure:"tools_upload_flavor"`
 	ToolsUploadPath   string            `mapstructure:"tools_upload_path"`
 	VMXData           map[string]string `mapstructure:"vmx_data"`
@@ -62,6 +59,11 @@ type config struct {
 	RawBootWait        string `mapstructure:"boot_wait"`
 	RawShutdownTimeout string `mapstructure:"shutdown_timeout"`
 	RawSSHWaitTimeout  string `mapstructure:"ssh_wait_timeout"`
+
+	SysRescCommand       []string  `mapstructure:"sysresc_command"`
+	SysRescURL           string    `mapstructure:"sysresc_url"`
+	SysRescChecksum      string    `mapstructure:"sysresc_checksum"`
+	SysRescChecksumType  string    `mapstructure:"sysresc_checksum_type"`
 
 	bootWait        time.Duration ``
 	shutdownTimeout time.Duration ``
@@ -213,15 +215,24 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		}
 	}
 
-	if b.config.SysRescMD5 == "" {
-		errs = append(errs, errors.New("Due to large file sizes, an sysresc_md5 is required"))
-	} else {
-		b.config.SysRescMD5 = strings.ToLower(b.config.SysRescMD5)
-	}
+	if b.config.SysRescURL != "" {
+		if b.config.SysRescChecksumType == "" {
+			errs = append(errs, errors.New("The sysresc_checksum_type must be specified."))
+		} else {
+			b.config.SysRescChecksumType = strings.ToLower(b.config.SysRescChecksumType)
+			if h := common.HashForType(b.config.SysRescChecksumType); h == nil {
+				errs = append(
+					errs,
+					fmt.Errorf("Unsupported checksum type: %s", b.config.SysRescChecksumType))
+			}
+		}
 
-	if b.config.SysRescURL == "" {
-		errs = append(errs, errors.New("An sysresc_url must be specified."))
-	} else {
+		if b.config.SysRescChecksum == "" {
+			errs = append(errs, errors.New("Due to large file sizes, an sysresc_checksum is required"))
+		} else {
+			b.config.SysRescChecksum = strings.ToLower(b.config.SysRescChecksum)
+		}
+
 		url, err := url.Parse(b.config.SysRescURL)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("sysresc_url is not a valid URL: %s", err))
@@ -343,7 +354,7 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		&common.StepProvision{},
 		&stepShutdown{},
 		&stepAttachSysResc{},
-		&stepRun{},
+		&stepSysRescRun{},
 		&stepTypeSysRescCommand{},
 		&stepCleanFiles{},
 		&stepCleanVMX{},

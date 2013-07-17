@@ -24,6 +24,11 @@ import (
 type stepTypeSysRescCommand struct{}
 
 func (s *stepTypeSysRescCommand) Run(state map[string]interface{}) multistep.StepAction {
+	sysresc := state["sysresc_path"].(string)
+	if sysresc == "" {
+		return multistep.ActionContinue
+	}
+
 	config := state["config"].(*config)
 	httpPort := state["http_port"].(uint)
 	ui := state["ui"].(packer.Ui)

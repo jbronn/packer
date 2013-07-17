@@ -1,7 +1,6 @@
 package virtualbox
 
 import (
-	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"github.com/mitchellh/multistep"
@@ -33,7 +32,12 @@ func (s *stepDownloadSysResc) Run(state map[string]interface{}) multistep.StepAc
 	config := state["config"].(*config)
 	ui := state["ui"].(packer.Ui)
 
-	checksum, err := hex.DecodeString(config.SysRescMD5)
+	if config.SysRescURL == "" {
+		state["sysresc_path"] = ""
+		return multistep.ActionContinue
+	}
+
+	checksum, err := hex.DecodeString(config.SysRescChecksum)
 	if err != nil {
 		state["error"] = fmt.Errorf("Error parsing checksum: %s", err)
 		return multistep.ActionHalt
@@ -47,7 +51,7 @@ func (s *stepDownloadSysResc) Run(state map[string]interface{}) multistep.StepAc
 		Url:        config.SysRescURL,
 		TargetPath: cachePath,
 		CopyFile:   false,
-		Hash:       md5.New(),
+		Hash:       common.HashForType(config.SysRescChecksumType),
 		Checksum:   checksum,
 	}
 
