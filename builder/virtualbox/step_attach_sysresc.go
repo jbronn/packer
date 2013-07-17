@@ -16,8 +16,12 @@ type stepAttachSysResc struct {
 }
 
 func (s *stepAttachSysResc) Run(state map[string]interface{}) multistep.StepAction {
+	isoPath := state["sysresc_path"].(string)
+	if isoPath == "" {
+		return multistep.ActionContinue
+	}
+
         driver := state["driver"].(Driver)
-        isoPath := state["sysresc_path"].(string)
         ui := state["ui"].(packer.Ui)
         vmName := state["vmName"].(string)
 
