@@ -3,16 +3,13 @@ package virtualbox
 import (
 	"errors"
 	"fmt"
-	"github.com/mitchellh/mapstructure"
 	"github.com/mitchellh/multistep"
 	"github.com/mitchellh/packer/builder/common"
 	"github.com/mitchellh/packer/packer"
 	"log"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 )
@@ -26,6 +23,8 @@ type Builder struct {
 }
 
 type config struct {
+	common.PackerConfig `mapstructure:",squash"`
+
 	BootCommand          []string   `mapstructure:"boot_command"`
 	DiskSize             uint       `mapstructure:"disk_size"`
 	FloppyFiles          []string   `mapstructure:"floppy_files"`
@@ -51,10 +50,6 @@ type config struct {
 	VBoxManage           [][]string `mapstructure:"vboxmanage"`
 	VMName               string     `mapstructure:"vm_name"`
 
-	PackerBuildName string `mapstructure:"packer_build_name"`
-	PackerDebug     bool   `mapstructure:"packer_debug"`
-	PackerForce     bool   `mapstructure:"packer_force"`
-
 	RawBootWait        string `mapstructure:"boot_wait"`
 	RawShutdownTimeout string `mapstructure:"shutdown_timeout"`
 	RawSSHWaitTimeout  string `mapstructure:"ssh_wait_timeout"`
@@ -70,37 +65,13 @@ type config struct {
 }
 
 func (b *Builder) Prepare(raws ...interface{}) error {
-	var md mapstructure.Metadata
-	decoderConfig := &mapstructure.DecoderConfig{
-		Metadata: &md,
-		Result:   &b.config,
-	}
-
-	decoder, err := mapstructure.NewDecoder(decoderConfig)
+	md, err := common.DecodeConfig(&b.config, raws...)
 	if err != nil {
 		return err
 	}
 
-	for _, raw := range raws {
-		err := decoder.Decode(raw)
-		if err != nil {
-			return err
-		}
-	}
-
 	// Accumulate any errors
-	errs := make([]error, 0)
-
-	// Unused keys are errors
-	if len(md.Unused) > 0 {
-		sort.Strings(md.Unused)
-		for _, unused := range md.Unused {
-			if unused != "type" && !strings.HasPrefix(unused, "packer_") {
-				errs = append(
-					errs, fmt.Errorf("Unknown configuration key: %s", unused))
-			}
-		}
-	}
+	errs := common.CheckUnusedConfig(md)
 
 	if b.config.DiskSize == 0 {
 		b.config.DiskSize = 40000
@@ -159,62 +130,37 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 	}
 
 	if b.config.HTTPPortMin > b.config.HTTPPortMax {
-		errs = append(errs, errors.New("http_port_min must be less than http_port_max"))
+		errs = packer.MultiErrorAppend(
+			errs, errors.New("http_port_min must be less than http_port_max"))
 	}
 
 	if b.config.ISOChecksum == "" {
-		errs = append(errs, errors.New("Due to large file sizes, an iso_checksum is required"))
+		errs = packer.MultiErrorAppend(
+			errs, errors.New("Due to large file sizes, an iso_checksum is required"))
 	} else {
 		b.config.ISOChecksum = strings.ToLower(b.config.ISOChecksum)
 	}
 
 	if b.config.ISOChecksumType == "" {
-		errs = append(errs, errors.New("The iso_checksum_type must be specified."))
+		errs = packer.MultiErrorAppend(
+			errs, errors.New("The iso_checksum_type must be specified."))
 	} else {
 		b.config.ISOChecksumType = strings.ToLower(b.config.ISOChecksumType)
 		if h := common.HashForType(b.config.ISOChecksumType); h == nil {
-			errs = append(
+			errs = packer.MultiErrorAppend(
 				errs,
 				fmt.Errorf("Unsupported checksum type: %s", b.config.ISOChecksumType))
 		}
 	}
 
 	if b.config.ISOUrl == "" {
-		errs = append(errs, errors.New("An iso_url must be specified."))
+		errs = packer.MultiErrorAppend(
+			errs, errors.New("An iso_url must be specified."))
 	} else {
-		url, err := url.Parse(b.config.ISOUrl)
+		b.config.ISOUrl, err = common.DownloadableURL(b.config.ISOUrl)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("iso_url is not a valid URL: %s", err))
-		} else {
-			if url.Scheme == "" {
-				url.Scheme = "file"
-			}
-
-			if url.Scheme == "file" {
-				if _, err := os.Stat(url.Path); err != nil {
-					errs = append(errs, fmt.Errorf("iso_url points to bad file: %s", err))
-				}
-			} else {
-				supportedSchemes := []string{"file", "http", "https"}
-				scheme := strings.ToLower(url.Scheme)
-
-				found := false
-				for _, supported := range supportedSchemes {
-					if scheme == supported {
-						found = true
-						break
-					}
-				}
-
-				if !found {
-					errs = append(errs, fmt.Errorf("Unsupported URL scheme in iso_url: %s", scheme))
-				}
-			}
-		}
-
-		if len(errs) == 0 {
-			// Put the URL back together since we may have modified it
-			b.config.ISOUrl = url.String()
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("iso_url: %s", err))
 		}
 	}
 
@@ -277,53 +223,25 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 	}
 
 	if b.config.GuestAdditionsURL != "" {
-		url, err := url.Parse(b.config.GuestAdditionsURL)
+		b.config.GuestAdditionsURL, err = common.DownloadableURL(b.config.GuestAdditionsURL)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("guest_additions_url is not a valid URL: %s", err))
-		} else {
-			if url.Scheme == "" {
-				url.Scheme = "file"
-			}
-
-			if url.Scheme == "file" {
-				if _, err := os.Stat(url.Path); err != nil {
-					errs = append(errs, fmt.Errorf("guest_additions_url points to bad file: %s", err))
-				}
-			} else {
-				supportedSchemes := []string{"file", "http", "https"}
-				scheme := strings.ToLower(url.Scheme)
-
-				found := false
-				for _, supported := range supportedSchemes {
-					if scheme == supported {
-						found = true
-						break
-					}
-				}
-
-				if !found {
-					errs = append(errs, fmt.Errorf("Unsupported URL scheme in guest_additions_url: %s", scheme))
-				}
-			}
-		}
-
-		if len(errs) == 0 {
-			// Put the URL back together since we may have modified it
-			b.config.GuestAdditionsURL = url.String()
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("guest_additions_url: %s", err))
 		}
 	}
 
 	if !b.config.PackerForce {
 		if _, err := os.Stat(b.config.OutputDir); err == nil {
-			errs = append(
+			errs = packer.MultiErrorAppend(
 				errs,
-				errors.New("Output directory already exists. It must not exist."))
+				fmt.Errorf("Output directory '%s' already exists. It must not exist.", b.config.OutputDir))
 		}
 	}
 
 	b.config.bootWait, err = time.ParseDuration(b.config.RawBootWait)
 	if err != nil {
-		errs = append(errs, fmt.Errorf("Failed parsing boot_wait: %s", err))
+		errs = packer.MultiErrorAppend(
+			errs, fmt.Errorf("Failed parsing boot_wait: %s", err))
 	}
 
 	if b.config.RawShutdownTimeout == "" {
@@ -336,29 +254,34 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 
 	b.config.shutdownTimeout, err = time.ParseDuration(b.config.RawShutdownTimeout)
 	if err != nil {
-		errs = append(errs, fmt.Errorf("Failed parsing shutdown_timeout: %s", err))
+		errs = packer.MultiErrorAppend(
+			errs, fmt.Errorf("Failed parsing shutdown_timeout: %s", err))
 	}
 
 	if b.config.SSHHostPortMin > b.config.SSHHostPortMax {
-		errs = append(errs, errors.New("ssh_host_port_min must be less than ssh_host_port_max"))
+		errs = packer.MultiErrorAppend(
+			errs, errors.New("ssh_host_port_min must be less than ssh_host_port_max"))
 	}
 
 	if b.config.SSHUser == "" {
-		errs = append(errs, errors.New("An ssh_username must be specified."))
+		errs = packer.MultiErrorAppend(
+			errs, errors.New("An ssh_username must be specified."))
 	}
 
 	b.config.sshWaitTimeout, err = time.ParseDuration(b.config.RawSSHWaitTimeout)
 	if err != nil {
-		errs = append(errs, fmt.Errorf("Failed parsing ssh_wait_timeout: %s", err))
+		errs = packer.MultiErrorAppend(
+			errs, fmt.Errorf("Failed parsing ssh_wait_timeout: %s", err))
 	}
 
 	b.driver, err = b.newDriver()
 	if err != nil {
-		errs = append(errs, fmt.Errorf("Failed creating VirtualBox driver: %s", err))
+		errs = packer.MultiErrorAppend(
+			errs, fmt.Errorf("Failed creating VirtualBox driver: %s", err))
 	}
 
-	if len(errs) > 0 {
-		return &packer.MultiError{errs}
+	if errs != nil && len(errs.Errors) > 0 {
+		return errs
 	}
 
 	return nil

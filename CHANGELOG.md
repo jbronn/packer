@@ -1,6 +1,38 @@
-## 0.2.1 (unreleased)
+## 0.2.2 (unreleased)
 
+BUG FIXES:
 
+* builder/virtualbox,vmware: relative paths work properly as URL
+  configurations. [GH-215]
+
+## 0.2.1 (July 26, 2013)
+
+FEATURES:
+
+* New builder: `amazon-instance` can create instance-storage backed
+  AMIs.
+* VMware builder now works with Workstation 9 on Linux.
+
+IMPROVEMENTS:
+
+* builder/amazon/all: Ctrl-C while waiting for state change works
+* builder/amazon/ebs: Can now launch instances into a VPC for added protection [GH-210]
+* builder/virtualbox,vmware: Add backspace, delete, and F1-F12 keys to the boot
+  command.
+* builder/virtualbox: massive performance improvements with big ISO files because
+  an expensive copy is avoided. [GH-202]
+* builder/vmware: CD is removed prior to exporting final machine. [GH-198]
+
+BUG FIXES:
+
+* builder/amazon/all: Gracefully handle when AMI appears to not exist
+  while AWS state is propogating. [GH-207]
+* builder/virtualbox: Trim carriage returns for Windows to properly
+  detect VM state on Windows. [GH-218]
+* core: build names no longer cause invalid config errors. [GH-197]
+* command/build: If any builds fail, exit with non-zero exit status.
+* communicator/ssh: SCP exit codes are tested and errors are reported. [GH-195]
+* communicator/ssh: Properly change slash direction for Windows hosts. [GH-218]
 
 ## 0.2.0 (July 16, 2013)
 

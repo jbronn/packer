@@ -8,7 +8,6 @@ import (
 	"log"
 	"net"
 	"net/rpc"
-	"time"
 )
 
 // An implementation of packer.Communicator where the communicator is actually
@@ -91,8 +90,7 @@ func (c *communicator) Start(cmd *packer.RemoteCmd) (err error) {
 			log.Panic(err)
 		}
 
-		cmd.ExitStatus = finished.ExitStatus
-		cmd.Exited = true
+		cmd.SetExited(finished.ExitStatus)
 	}()
 
 	err = c.client.Call("Communicator.Start", &args, new(interface{}))
@@ -204,10 +202,7 @@ func (c *CommunicatorServer) Start(args *CommunicatorStartArgs, reply *interface
 			defer conn.Close()
 		}
 
-		for !cmd.Exited {
-			time.Sleep(50 * time.Millisecond)
-		}
-
+		cmd.Wait()
 		responseWriter.Encode(&CommandFinished{cmd.ExitStatus})
 	}()
 

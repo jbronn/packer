@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"testing"
@@ -65,6 +66,23 @@ func TestHelperProcess(*testing.T) {
 		ServeProvisioner(new(helperProvisioner))
 	case "start-timeout":
 		time.Sleep(1 * time.Minute)
+		os.Exit(1)
+	case "stderr":
+		fmt.Println(":1234")
+		log.Println("HELLO")
+		log.Println("WORLD")
+	case "stdin":
+		fmt.Println(":1234")
+		data := make([]byte, 5)
+		if _, err := os.Stdin.Read(data); err != nil {
+			log.Printf("stdin read error: %s", err)
+			os.Exit(100)
+		}
+
+		if string(data) == "hello" {
+			os.Exit(0)
+		}
+
 		os.Exit(1)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %q\n", cmd)

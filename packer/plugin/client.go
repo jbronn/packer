@@ -1,12 +1,14 @@
 package plugin
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
 	"github.com/mitchellh/packer/packer"
 	packrpc "github.com/mitchellh/packer/packer/rpc"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/rpc"
 	"os"
@@ -26,7 +28,7 @@ var managedClients = make([]*Client, 0, 5)
 type Client struct {
 	config      *ClientConfig
 	exited      bool
-	doneLogging bool
+	doneLogging chan struct{}
 	l           sync.Mutex
 	address     string
 }
@@ -53,6 +55,10 @@ type ClientConfig struct {
 	// StartTimeout is the timeout to wait for the plugin to say it
 	// has started successfully.
 	StartTimeout time.Duration
+
+	// If non-nil, then the stderr of the client will be written to here
+	// (as well as the log).
+	Stderr io.Writer
 }
 
 // This makes sure all the managed subprocesses are killed and properly
@@ -92,6 +98,10 @@ func NewClient(config *ClientConfig) (c *Client) {
 
 	if config.StartTimeout == 0 {
 		config.StartTimeout = 1 * time.Minute
+	}
+
+	if config.Stderr == nil {
+		config.Stderr = ioutil.Discard
 	}
 
 	c = &Client{config: config}
@@ -178,16 +188,7 @@ func (c *Client) Kill() {
 	cmd.Process.Kill()
 
 	// Wait for the client to finish logging so we have a complete log
-	done := make(chan bool)
-	go func() {
-		for !c.doneLogging {
-			time.Sleep(10 * time.Millisecond)
-		}
-
-		done <- true
-	}()
-
-	<-done
+	<-c.doneLogging
 }
 
 // Starts the underlying subprocess, communicating with it to negotiate
@@ -204,6 +205,8 @@ func (c *Client) Start() (address string, err error) {
 		return c.address, nil
 	}
 
+	c.doneLogging = make(chan struct{})
+
 	env := []string{
 		fmt.Sprintf("%s=%s", MagicCookieKey, MagicCookieValue),
 		fmt.Sprintf("PACKER_PLUGIN_MIN_PORT=%d", c.config.MinPort),
@@ -211,12 +214,13 @@ func (c *Client) Start() (address string, err error) {
 	}
 
 	stdout := new(bytes.Buffer)
-	stderr := new(bytes.Buffer)
+	stderr_r, stderr_w := io.Pipe()
 
 	cmd := c.config.Cmd
 	cmd.Env = append(cmd.Env, os.Environ()...)
 	cmd.Env = append(cmd.Env, env...)
-	cmd.Stderr = stderr
+	cmd.Stdin = os.Stdin
+	cmd.Stderr = stderr_w
 	cmd.Stdout = stdout
 
 	log.Printf("Starting plugin: %s %#v", cmd.Path, cmd.Args)
@@ -240,13 +244,23 @@ func (c *Client) Start() (address string, err error) {
 
 	// Start goroutine to wait for process to exit
 	go func() {
+		// Make sure we close the write end of our stderr listener so
+		// that the log goroutine ends properly.
+		defer stderr_w.Close()
+
+		// Wait for the command to end.
 		cmd.Wait()
+
+		// Log and make sure to flush the logs write away
 		log.Printf("%s: plugin process exited\n", cmd.Path)
+		os.Stderr.Sync()
+
+		// Mark that we exited
 		c.exited = true
 	}()
 
 	// Start goroutine that logs the stderr
-	go c.logStderr(stderr)
+	go c.logStderr(stderr_r)
 
 	// Some channels for the next step
 	timeout := time.After(c.config.StartTimeout)
@@ -287,26 +301,22 @@ func (c *Client) Start() (address string, err error) {
 	return
 }
 
-func (c *Client) logStderr(buf *bytes.Buffer) {
-	for done := false; !done; {
-		if c.Exited() {
-			done = true
+func (c *Client) logStderr(r io.Reader) {
+	bufR := bufio.NewReader(r)
+	for {
+		line, err := bufR.ReadString('\n')
+		if line != "" {
+			log.Printf("%s: %s", c.config.Cmd.Path, line)
+			c.config.Stderr.Write([]byte(line))
 		}
 
-		var err error
-		for err != io.EOF {
-			var line string
-			line, err = buf.ReadString('\n')
-			if line != "" {
-				log.Printf("%s: %s", c.config.Cmd.Path, line)
-			}
+		if err == io.EOF {
+			break
 		}
-
-		time.Sleep(10 * time.Millisecond)
 	}
 
 	// Flag that we've completed logging for others
-	c.doneLogging = true
+	close(c.doneLogging)
 }
 
 func (c *Client) rpcClient() (*rpc.Client, error) {

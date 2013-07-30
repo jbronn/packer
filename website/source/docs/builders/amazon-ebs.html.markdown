@@ -1,22 +1,17 @@
 ---
 layout: "docs"
+page_title: "Amazon AMI Builder (EBS backed)"
 ---
 
-# Amazon AMI Builder
+# AMI Builder (EBS backed)
 
 Type: `amazon-ebs`
 
 The `amazon-ebs` builder is able to create Amazon AMIs backed by EBS
-volumes for use in [EC2](http://aws.amazon.com/ec2/). The builder takes
-an initial source AMI, runs any provisioning necesary on the instance,
-and snapshots it into a reusable AMI.
-
-Amazon supports two types of AMIs: EBS-backed and instance-store. Instance
-store AMIs are considerably harder to create, requiring many platform-specific
-steps that can often take a very long time. EBS-backed AMIs, on the hand,
-only require a source AMI to exist. This builder only builds EBS-backed
-instances, because they are easier to create, especially across many
-platforms running Packer.
+volumes for use in [EC2](http://aws.amazon.com/ec2/). For more information
+on the difference betwen EBS-backed instances and instance-store backed
+instances, see the
+["storage for the root device" section in the EC2 documentation](http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ComponentsAMIs.html#storage-for-the-root-device).
 
 This builder builds an AMI by launching an EC2 instance from a source AMI,
 provisioning that running machine, and then creating an AMI from that machine.
@@ -75,6 +70,12 @@ Optional:
 * `ssh_timeout` (string) - The time to wait for SSH to become available
   before timing out. The format of this value is a duration such as "5s"
   or "5m". The default SSH timeout is "1m", or one minute.
+
+* `subnet_id` (string) - If using VPC, the ID of the subnet, such as
+  "subnet-12345def", where Packer will launch the EC2 instance.
+
+* `vpc_id` (string) - If launching into a VPC subnet, Packer needs the
+  VPC ID in order to create a temporary security group within the VPC.
 
 ## Basic Example
 

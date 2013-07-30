@@ -1,8 +1,10 @@
 package packer
 
 import (
+	"github.com/mitchellh/iochan"
 	"io"
-	"time"
+	"strings"
+	"sync"
 )
 
 // RemoteCmd represents a remote command being prepared or run.
@@ -30,6 +32,10 @@ type RemoteCmd struct {
 
 	// Once Exited is true, this will contain the exit code of the process.
 	ExitStatus int
+
+	// Internal locks and such used for safely setting some shared variables
+	l      sync.Mutex
+	exitCh chan struct{}
 }
 
 // A Communicator is the interface used to communicate with the machine
@@ -57,9 +63,96 @@ type Communicator interface {
 	Download(string, io.Writer) error
 }
 
+// StartWithUi runs the remote command and streams the output to any
+// configured Writers for stdout/stderr, while also writing each line
+// as it comes to a Ui.
+func (r *RemoteCmd) StartWithUi(c Communicator, ui Ui) error {
+	stdout_r, stdout_w := io.Pipe()
+	stderr_r, stderr_w := io.Pipe()
+	defer stdout_w.Close()
+	defer stderr_w.Close()
+
+	// Set the writers for the output so that we get it streamed to us
+	if r.Stdout == nil {
+		r.Stdout = stdout_w
+	} else {
+		r.Stdout = io.MultiWriter(r.Stdout, stdout_w)
+	}
+
+	if r.Stderr == nil {
+		r.Stderr = stderr_w
+	} else {
+		r.Stderr = io.MultiWriter(r.Stderr, stderr_w)
+	}
+
+	// Start the command
+	if err := c.Start(r); err != nil {
+		return err
+	}
+
+	// Create the channels we'll use for data
+	exitCh := make(chan int, 1)
+	stdoutCh := iochan.DelimReader(stdout_r, '\n')
+	stderrCh := iochan.DelimReader(stderr_r, '\n')
+
+	// Start the goroutine to watch for the exit
+	go func() {
+		defer stdout_w.Close()
+		defer stderr_w.Close()
+		r.Wait()
+		exitCh <- r.ExitStatus
+	}()
+
+	// Loop and get all our output
+OutputLoop:
+	for {
+		select {
+		case output := <-stderrCh:
+			ui.Message(strings.TrimSpace(output))
+		case output := <-stdoutCh:
+			ui.Message(strings.TrimSpace(output))
+		case <-exitCh:
+			break OutputLoop
+		}
+	}
+
+	// Make sure we finish off stdout/stderr because we may have gotten
+	// a message from the exit channel before finishing these first.
+	for output := range stdoutCh {
+		ui.Message(strings.TrimSpace(output))
+	}
+
+	for output := range stderrCh {
+		ui.Message(strings.TrimSpace(output))
+	}
+
+	return nil
+}
+
+// SetExited is a helper for setting that this process is exited. This
+// should be called by communicators who are running a remote command in
+// order to set that the command is done.
+func (r *RemoteCmd) SetExited(status int) {
+	r.l.Lock()
+	defer r.l.Unlock()
+
+	if r.exitCh == nil {
+		r.exitCh = make(chan struct{})
+	}
+
+	r.Exited = true
+	r.ExitStatus = status
+	close(r.exitCh)
+}
+
 // Wait waits for the remote command to complete.
 func (r *RemoteCmd) Wait() {
-	for !r.Exited {
-		time.Sleep(50 * time.Millisecond)
+	// Make sure our condition variable is initialized.
+	r.l.Lock()
+	if r.exitCh == nil {
+		r.exitCh = make(chan struct{})
 	}
+	r.l.Unlock()
+
+	<-r.exitCh
 }
