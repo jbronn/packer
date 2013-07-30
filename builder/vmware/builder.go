@@ -163,55 +163,28 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 
 	if b.config.SysRescURL != "" {
 		if b.config.SysRescChecksumType == "" {
-			errs = append(errs, errors.New("The sysresc_checksum_type must be specified."))
+			errs = packer.MultiErrorAppend(
+				errs, errors.New("The sysresc_checksum_type must be specified."))
 		} else {
 			b.config.SysRescChecksumType = strings.ToLower(b.config.SysRescChecksumType)
 			if h := common.HashForType(b.config.SysRescChecksumType); h == nil {
-				errs = append(
+				errs = packer.MultiErrorAppend(
 					errs,
 					fmt.Errorf("Unsupported checksum type: %s", b.config.SysRescChecksumType))
 			}
 		}
 
 		if b.config.SysRescChecksum == "" {
-			errs = append(errs, errors.New("Due to large file sizes, an sysresc_checksum is required"))
+			errs = packer.MultiErrorAppend(
+				errs, errors.New("Due to large file sizes, a sysresc_checksum is required"))
 		} else {
 			b.config.SysRescChecksum = strings.ToLower(b.config.SysRescChecksum)
 		}
 
-		url, err := url.Parse(b.config.SysRescURL)
+		b.config.SysRescURL, err = common.DownloadableURL(b.config.SysRescURL)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("sysresc_url is not a valid URL: %s", err))
-		} else {
-			if url.Scheme == "" {
-				url.Scheme = "file"
-			}
-
-			if url.Scheme == "file" {
-				if _, err := os.Stat(url.Path); err != nil {
-					errs = append(errs, fmt.Errorf("sysresc_url points to bad file: %s", err))
-				}
-			} else {
-				supportedSchemes := []string{"file", "http", "https"}
-				scheme := strings.ToLower(url.Scheme)
-
-				found := false
-				for _, supported := range supportedSchemes {
-					if scheme == supported {
-						found = true
-						break
-					}
-				}
-
-				if !found {
-					errs = append(errs, fmt.Errorf("Unsupported URL scheme in sysresc_url: %s", scheme))
-				}
-			}
-		}
-
-		if len(errs) == 0 {
-			// Put the URL back together since we may have modified it
-			b.config.SysRescURL = url.String()
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("sysresc_url: %s", err))
 		}
 	}
 
