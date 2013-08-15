@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mitchellh/multistep"
-	"github.com/mitchellh/packer/builder/common"
+	"github.com/mitchellh/packer/common"
 	"github.com/mitchellh/packer/packer"
 	"log"
 	"math/rand"
@@ -19,7 +19,6 @@ const BuilderId = "mitchellh.vmware"
 
 type Builder struct {
 	config config
-	driver Driver
 	runner multistep.Runner
 }
 
@@ -63,6 +62,7 @@ type config struct {
 	bootWait        time.Duration ``
 	shutdownTimeout time.Duration ``
 	sshWaitTimeout  time.Duration ``
+	tpl             *common.Template
 }
 
 func (b *Builder) Prepare(raws ...interface{}) error {
@@ -70,6 +70,12 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 	if err != nil {
 		return err
 	}
+
+	b.config.tpl, err = common.NewTemplate()
+	if err != nil {
+		return err
+	}
+	b.config.tpl.UserVars = b.config.PackerUserVars
 
 	// Accumulate any errors
 	errs := common.CheckUnusedConfig(md)
@@ -125,6 +131,72 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 	if b.config.ToolsUploadPath == "" {
 		b.config.ToolsUploadPath = "{{ .Flavor }}.iso"
 	}
+
+	// Errors
+	templates := map[string]*string{
+		"disk_name":           &b.config.DiskName,
+		"guest_os_type":       &b.config.GuestOSType,
+		"http_directory":      &b.config.HTTPDir,
+		"iso_checksum":        &b.config.ISOChecksum,
+		"iso_checksum_type":   &b.config.ISOChecksumType,
+		"iso_url":             &b.config.ISOUrl,
+		"output_directory":    &b.config.OutputDir,
+		"shutdown_command":    &b.config.ShutdownCommand,
+		"ssh_password":        &b.config.SSHPassword,
+		"ssh_username":        &b.config.SSHUser,
+		"tools_upload_flavor": &b.config.ToolsUploadFlavor,
+		"vm_name":             &b.config.VMName,
+		"boot_wait":           &b.config.RawBootWait,
+		"shutdown_timeout":    &b.config.RawShutdownTimeout,
+		"ssh_wait_timeout":    &b.config.RawSSHWaitTimeout,
+	}
+
+	for n, ptr := range templates {
+		var err error
+		*ptr, err = b.config.tpl.Process(*ptr, nil)
+		if err != nil {
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("Error processing %s: %s", n, err))
+		}
+	}
+
+	for i, command := range b.config.BootCommand {
+		if err := b.config.tpl.Validate(command); err != nil {
+			errs = packer.MultiErrorAppend(errs,
+				fmt.Errorf("Error processing boot_command[%d]: %s", i, err))
+		}
+	}
+
+	for i, file := range b.config.FloppyFiles {
+		var err error
+		b.config.FloppyFiles[i], err = b.config.tpl.Process(file, nil)
+		if err != nil {
+			errs = packer.MultiErrorAppend(errs,
+				fmt.Errorf("Error processing floppy_files[%d]: %s",
+					i, err))
+		}
+	}
+
+	newVMXData := make(map[string]string)
+	for k, v := range b.config.VMXData {
+		k, err = b.config.tpl.Process(k, nil)
+		if err != nil {
+			errs = packer.MultiErrorAppend(errs,
+				fmt.Errorf("Error processing VMX data key %s: %s", k, err))
+			continue
+		}
+
+		v, err = b.config.tpl.Process(v, nil)
+		if err != nil {
+			errs = packer.MultiErrorAppend(errs,
+				fmt.Errorf("Error processing VMX data value '%s': %s", v, err))
+			continue
+		}
+
+		newVMXData[k] = v
+	}
+
+	b.config.VMXData = newVMXData
 
 	if b.config.HTTPPortMin > b.config.HTTPPortMax {
 		errs = packer.MultiErrorAppend(
@@ -240,12 +312,6 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 			errs, fmt.Errorf("vnc_port_min must be less than vnc_port_max"))
 	}
 
-	b.driver, err = NewDriver()
-	if err != nil {
-		errs = packer.MultiErrorAppend(
-			errs, fmt.Errorf("Failed creating VMware driver: %s", err))
-	}
-
 	if errs != nil && len(errs.Errors) > 0 {
 		return errs
 	}
@@ -254,6 +320,12 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 }
 
 func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packer.Artifact, error) {
+	// Initialize the driver that will handle our interaction with VMware
+	driver, err := NewDriver()
+	if err != nil {
+		return nil, fmt.Errorf("Failed creating VMware driver: %s", err)
+	}
+
 	// Seed the random number generator
 	rand.Seed(time.Now().UTC().UnixNano())
 
@@ -291,7 +363,7 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 	state := make(map[string]interface{})
 	state["cache"] = cache
 	state["config"] = &b.config
-	state["driver"] = b.driver
+	state["driver"] = driver
 	state["hook"] = hook
 	state["ui"] = ui
 

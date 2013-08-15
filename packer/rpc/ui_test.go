@@ -3,6 +3,7 @@ package rpc
 import (
 	"cgl.tideland.biz/asserts"
 	"net/rpc"
+	"reflect"
 	"testing"
 )
 
@@ -11,6 +12,9 @@ type testUi struct {
 	askQuery       string
 	errorCalled    bool
 	errorMessage   string
+	machineCalled  bool
+	machineType    string
+	machineArgs    []string
 	messageCalled  bool
 	messageMessage string
 	sayCalled      bool
@@ -26,6 +30,12 @@ func (u *testUi) Ask(query string) (string, error) {
 func (u *testUi) Error(message string) {
 	u.errorCalled = true
 	u.errorMessage = message
+}
+
+func (u *testUi) Machine(t string, args ...string) {
+	u.machineCalled = true
+	u.machineType = t
+	u.machineArgs = args
 }
 
 func (u *testUi) Message(message string) {
@@ -72,4 +82,18 @@ func TestUiRPC(t *testing.T) {
 
 	uiClient.Say("message")
 	assert.Equal(ui.sayMessage, "message", "message should be correct")
+
+	uiClient.Machine("foo", "bar", "baz")
+	if !ui.machineCalled {
+		t.Fatal("machine should be called")
+	}
+
+	if ui.machineType != "foo" {
+		t.Fatalf("bad type: %#v", ui.machineType)
+	}
+
+	expected := []string{"bar", "baz"}
+	if !reflect.DeepEqual(ui.machineArgs, expected) {
+		t.Fatalf("bad: %#v", ui.machineArgs)
+	}
 }

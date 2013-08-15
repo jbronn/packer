@@ -9,19 +9,58 @@ import (
 	"time"
 )
 
+// StateRefreshFunc is a function type used for StateChangeConf that is
+// responsible for refreshing the item being watched for a state change.
+//
+// It returns three results. `result` is any object that will be returned
+// as the final object after waiting for state change. This allows you to
+// return the final updated object, for example an EC2 instance after refreshing
+// it.
+//
+// `state` is the latest state of that object. And `err` is any error that
+// may have happened while refreshing the state.
+type StateRefreshFunc func() (result interface{}, state string, err error)
+
+// StateChangeConf is the configuration struct used for `WaitForState`.
 type StateChangeConf struct {
 	Conn      *ec2.EC2
-	Instance  *ec2.Instance
 	Pending   []string
+	Refresh   StateRefreshFunc
 	StepState map[string]interface{}
 	Target    string
 }
 
-func WaitForState(conf *StateChangeConf) (i *ec2.Instance, err error) {
-	log.Printf("Waiting for instance state to become: %s", conf.Target)
+// InstanceStateRefreshFunc returns a StateRefreshFunc that is used to watch
+// an EC2 instance.
+func InstanceStateRefreshFunc(conn *ec2.EC2, i *ec2.Instance) StateRefreshFunc {
+	return func() (interface{}, string, error) {
+		resp, err := conn.Instances([]string{i.InstanceId}, ec2.NewFilter())
+		if err != nil {
+			log.Printf("Error on InstanceStateRefresh: %s", err)
+			return nil, "", err
+		}
 
-	i = conf.Instance
-	for i.State.Name != conf.Target {
+		i = &resp.Reservations[0].Instances[0]
+		return i, i.State.Name, nil
+	}
+}
+
+// WaitForState watches an object and waits for it to achieve a certain
+// state.
+func WaitForState(conf *StateChangeConf) (i interface{}, err error) {
+	log.Printf("Waiting for state to become: %s", conf.Target)
+
+	for {
+		var currentState string
+		i, currentState, err = conf.Refresh()
+		if err != nil {
+			return
+		}
+
+		if currentState == conf.Target {
+			return
+		}
+
 		if conf.StepState != nil {
 			if _, ok := conf.StepState[multistep.StateCancelled]; ok {
 				return nil, errors.New("interrupted")
@@ -30,24 +69,17 @@ func WaitForState(conf *StateChangeConf) (i *ec2.Instance, err error) {
 
 		found := false
 		for _, allowed := range conf.Pending {
-			if i.State.Name == allowed {
+			if currentState == allowed {
 				found = true
 				break
 			}
 		}
 
 		if !found {
-			fmt.Errorf("unexpected state '%s', wanted target '%s'", i.State.Name, conf.Target)
+			fmt.Errorf("unexpected state '%s', wanted target '%s'", currentState, conf.Target)
 			return
 		}
 
-		var resp *ec2.InstancesResp
-		resp, err = conf.Conn.Instances([]string{i.InstanceId}, ec2.NewFilter())
-		if err != nil {
-			return
-		}
-
-		i = &resp.Reservations[0].Instances[0]
 		time.Sleep(2 * time.Second)
 	}
 

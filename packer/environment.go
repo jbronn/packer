@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // The function type used to lookup Builder implementations.
@@ -68,12 +69,18 @@ type EnvironmentConfig struct {
 	Ui         Ui
 }
 
+type helpCommandEntry struct {
+	i        int
+	key      string
+	synopsis string
+}
+
 // DefaultEnvironmentConfig returns a default EnvironmentConfig that can
 // be used to create a new enviroment with NewEnvironment with sane defaults.
 func DefaultEnvironmentConfig() *EnvironmentConfig {
 	config := &EnvironmentConfig{}
 	config.Commands = make([]string, 0)
-	config.Ui = &ReaderWriterUi{
+	config.Ui = &BasicUi{
 		Reader: os.Stdin,
 		Writer: os.Stdout,
 	}
@@ -245,7 +252,7 @@ func (e *coreEnvironment) Cli(args []string) (result int, err error) {
 
 		// If we still don't have a command, show the help.
 		if command == nil {
-			log.Printf("Environment.CLI: command not found: %s\n", args[0])
+			e.ui.Error(fmt.Sprintf("Unknown command: %s\n", args[0]))
 			e.printHelp()
 			return 1, nil
 		}
@@ -266,39 +273,82 @@ func (e *coreEnvironment) Cli(args []string) (result int, err error) {
 func (e *coreEnvironment) printHelp() {
 	// Created a sorted slice of the map keys and record the longest
 	// command name so we can better format the output later.
-	i := 0
 	maxKeyLen := 0
 	for _, command := range e.commands {
 		if len(command) > maxKeyLen {
 			maxKeyLen = len(command)
 		}
-
-		i++
 	}
 
 	// Sort the keys
 	sort.Strings(e.commands)
 
+	// Create the communication/sync mechanisms to get the synopsis' of
+	// the various commands. We do this in parallel since the overhead
+	// of the subprocess underneath is very expensive and this speeds things
+	// up an incredible amount.
+	var wg sync.WaitGroup
+	ch := make(chan *helpCommandEntry)
+
+	for i, key := range e.commands {
+		wg.Add(1)
+
+		// Get the synopsis in a goroutine since it may take awhile
+		// to subprocess out.
+		go func(i int, key string) {
+			defer wg.Done()
+			var synopsis string
+			command, err := e.components.Command(key)
+			if err != nil {
+				synopsis = fmt.Sprintf("Error loading command: %s", err.Error())
+			} else if command == nil {
+				return
+			} else {
+				synopsis = command.Synopsis()
+			}
+
+			// Pad the key with spaces so that they're all the same width
+			key = fmt.Sprintf("%s%s", key, strings.Repeat(" ", maxKeyLen-len(key)))
+
+			// Output the command and the synopsis
+			ch <- &helpCommandEntry{
+				i:        i,
+				key:      key,
+				synopsis: synopsis,
+			}
+		}(i, key)
+	}
+
 	e.ui.Say("usage: packer [--version] [--help] <command> [<args>]\n")
 	e.ui.Say("Available commands are:")
-	for _, key := range e.commands {
-		var synopsis string
 
-		command, err := e.components.Command(key)
-		if err != nil {
-			synopsis = fmt.Sprintf("Error loading command: %s", err.Error())
-		} else if command == nil {
-			continue
-		} else {
-			synopsis = command.Synopsis()
+	// Make a goroutine that just waits for all the synopsis gathering
+	// to complete, and then output it.
+	synopsisDone := make(chan struct{})
+	go func() {
+		defer close(synopsisDone)
+		entries := make([]string, len(e.commands))
+
+		for entry := range ch {
+			e.ui.Machine("command", entry.key, entry.synopsis)
+			message := fmt.Sprintf("    %s    %s", entry.key, entry.synopsis)
+			entries[entry.i] = message
 		}
 
-		// Pad the key with spaces so that they're all the same width
-		key = fmt.Sprintf("%v%v", key, strings.Repeat(" ", maxKeyLen-len(key)))
+		for _, message := range entries {
+			if message != "" {
+				e.ui.Say(message)
+			}
+		}
+	}()
 
-		// Output the command and the synopsis
-		e.ui.Say(fmt.Sprintf("    %v     %v", key, synopsis))
-	}
+	// Wait to complete getting the synopsis' then close the channel
+	wg.Wait()
+	close(ch)
+	<-synopsisDone
+
+	e.ui.Say("\nGlobally recognized options:")
+	e.ui.Say("    -machine-readable    Machine-readable output format.")
 }
 
 // Returns the UI for the environment. The UI is the interface that should

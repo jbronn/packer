@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -73,6 +74,17 @@ func DownloadableURL(original string) (string, error) {
 	}
 
 	if url.Scheme == "file" {
+		// For Windows absolute file paths, remove leading / prior to processing
+		// since net/url turns "C:/" into "/C:/"
+		if runtime.GOOS == "windows" && url.Path[0] == '/' {
+			url.Path = url.Path[1:len(url.Path)]
+
+			// Also replace all backslashes with forwardslashes since Windows
+			// users are likely to do this but the URL should actually only
+			// contain forward slashes.
+			url.Path = strings.Replace(url.Path, `\`, `/`, -1)
+		}
+
 		if _, err := os.Stat(url.Path); err != nil {
 			return "", err
 		}

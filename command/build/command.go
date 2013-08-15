@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	cmdcommon "github.com/mitchellh/packer/common/command"
 	"github.com/mitchellh/packer/packer"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -22,15 +23,13 @@ func (Command) Help() string {
 func (c Command) Run(env packer.Environment, args []string) int {
 	var cfgDebug bool
 	var cfgForce bool
-	var cfgExcept []string
-	var cfgOnly []string
+	buildOptions := new(cmdcommon.BuildOptions)
 
 	cmdFlags := flag.NewFlagSet("build", flag.ContinueOnError)
 	cmdFlags.Usage = func() { env.Ui().Say(c.Help()) }
 	cmdFlags.BoolVar(&cfgDebug, "debug", false, "debug mode for builds")
 	cmdFlags.BoolVar(&cfgForce, "force", false, "force a build if artifacts exist")
-	cmdFlags.Var((*stringSliceValue)(&cfgExcept), "except", "build all builds except these")
-	cmdFlags.Var((*stringSliceValue)(&cfgOnly), "only", "only build the given builds by name")
+	cmdcommon.BuildOptionFlags(cmdFlags, buildOptions)
 	if err := cmdFlags.Parse(args); err != nil {
 		return 1
 	}
@@ -41,23 +40,24 @@ func (c Command) Run(env packer.Environment, args []string) int {
 		return 1
 	}
 
-	if len(cfgOnly) > 0 && len(cfgExcept) > 0 {
-		env.Ui().Error("Only one of '-except' or '-only' may be specified.\n")
+	if err := buildOptions.Validate(); err != nil {
+		env.Ui().Error(err.Error())
+		env.Ui().Error("")
+		env.Ui().Error(c.Help())
+		return 1
+	}
+
+	userVars, err := buildOptions.AllUserVars()
+	if err != nil {
+		env.Ui().Error(fmt.Sprintf("Error compiling user variables: %s", err))
+		env.Ui().Error("")
 		env.Ui().Error(c.Help())
 		return 1
 	}
 
 	// Read the file into a byte array so that we can parse the template
 	log.Printf("Reading template: %s", args[0])
-	tplData, err := ioutil.ReadFile(args[0])
-	if err != nil {
-		env.Ui().Error(fmt.Sprintf("Failed to read template file: %s", err))
-		return 1
-	}
-
-	// Parse the template into a machine-usable format
-	log.Println("Parsing template...")
-	tpl, err := packer.ParseTemplate(tplData)
+	tpl, err := packer.ParseTemplateFile(args[0])
 	if err != nil {
 		env.Ui().Error(fmt.Sprintf("Failed to parse template: %s", err))
 		return 1
@@ -72,47 +72,10 @@ func (c Command) Run(env packer.Environment, args []string) int {
 	}
 
 	// Go through each builder and compile the builds that we care about
-	buildNames := tpl.BuildNames()
-	builds := make([]packer.Build, 0, len(buildNames))
-	for _, buildName := range buildNames {
-		if len(cfgExcept) > 0 {
-			found := false
-			for _, only := range cfgExcept {
-				if buildName == only {
-					found = true
-					break
-				}
-			}
-
-			if found {
-				log.Printf("Skipping build '%s' because specified by -except.", buildName)
-				continue
-			}
-		}
-
-		if len(cfgOnly) > 0 {
-			found := false
-			for _, only := range cfgOnly {
-				if buildName == only {
-					found = true
-					break
-				}
-			}
-
-			if !found {
-				log.Printf("Skipping build '%s' because not specified by -only.", buildName)
-				continue
-			}
-		}
-
-		log.Printf("Creating build: %s", buildName)
-		build, err := tpl.Build(buildName, components)
-		if err != nil {
-			env.Ui().Error(fmt.Sprintf("Failed to create build '%s': \n\n%s", buildName, err))
-			return 1
-		}
-
-		builds = append(builds, build)
+	builds, err := buildOptions.Builds(tpl, components)
+	if err != nil {
+		env.Ui().Error(err.Error())
+		return 1
 	}
 
 	if cfgDebug {
@@ -150,7 +113,7 @@ func (c Command) Run(env packer.Environment, args []string) int {
 		log.Printf("Preparing build: %s", b.Name())
 		b.SetDebug(cfgDebug)
 		b.SetForce(cfgForce)
-		err := b.Prepare()
+		err := b.Prepare(userVars)
 		if err != nil {
 			env.Ui().Error(err.Error())
 			return 1
@@ -233,7 +196,16 @@ func (c Command) Run(env packer.Environment, args []string) int {
 	if len(artifacts) > 0 {
 		env.Ui().Say("\n==> Builds finished. The artifacts of successful builds are:")
 		for name, buildArtifacts := range artifacts {
-			for _, artifact := range buildArtifacts {
+			// Create a UI for the machine readable stuff to be targetted
+			ui := &packer.TargettedUi{
+				Target: name,
+				Ui:     env.Ui(),
+			}
+
+			// Machine-readable helpful
+			ui.Machine("artifact-count", strconv.FormatInt(int64(len(buildArtifacts)), 10))
+
+			for i, artifact := range buildArtifacts {
 				var message bytes.Buffer
 				fmt.Fprintf(&message, "--> %s: ", name)
 
@@ -241,6 +213,24 @@ func (c Command) Run(env packer.Environment, args []string) int {
 					fmt.Fprintf(&message, artifact.String())
 				} else {
 					fmt.Fprint(&message, "<nothing>")
+				}
+
+				iStr := strconv.FormatInt(int64(i), 10)
+				if artifact != nil {
+					ui.Machine("artifact", iStr, "builder-id", artifact.BuilderId())
+					ui.Machine("artifact", iStr, "id", artifact.Id())
+					ui.Machine("artifact", iStr, "string", artifact.String())
+
+					files := artifact.Files()
+					ui.Machine("artifact",
+						iStr,
+						"files-count", strconv.FormatInt(int64(len(files)), 10))
+					for fi, file := range files {
+						fiStr := strconv.FormatInt(int64(fi), 10)
+						ui.Machine("artifact", iStr, "file", fiStr, file)
+					}
+				} else {
+					ui.Machine("artifact", iStr, "nil")
 				}
 
 				env.Ui().Say(message.String())

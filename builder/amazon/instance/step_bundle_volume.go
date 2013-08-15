@@ -1,14 +1,10 @@
 package instance
 
 import (
-	"bytes"
 	"fmt"
 	"github.com/mitchellh/goamz/ec2"
 	"github.com/mitchellh/multistep"
 	"github.com/mitchellh/packer/packer"
-	"strconv"
-	"text/template"
-	"time"
 )
 
 type bundleCmdData struct {
@@ -19,10 +15,6 @@ type bundleCmdData struct {
 	KeyPath      string
 	Prefix       string
 	PrivatePath  string
-}
-
-type bundlePrefixData struct {
-	CreateTime string
 }
 
 type StepBundleVolume struct{}
@@ -55,29 +47,26 @@ func (s *StepBundleVolume) Run(state map[string]interface{}) multistep.StepActio
 	}
 
 	// Bundle the volume
-	var bundlePrefix bytes.Buffer
-	prefixTData := bundlePrefixData{
-		CreateTime: strconv.FormatInt(time.Now().UTC().Unix(), 10),
-	}
-	t := template.Must(template.New("bundlePrefix").Parse(config.BundlePrefix))
-	t.Execute(&bundlePrefix, prefixTData)
-
-	var bundleCmd bytes.Buffer
-	tData := bundleCmdData{
+	var err error
+	config.BundleVolCommand, err = config.tpl.Process(config.BundleVolCommand, bundleCmdData{
 		AccountId:    config.AccountId,
 		Architecture: instance.Architecture,
 		CertPath:     x509RemoteCertPath,
 		Destination:  config.BundleDestination,
 		KeyPath:      x509RemoteKeyPath,
-		Prefix:       bundlePrefix.String(),
+		Prefix:       config.BundlePrefix,
 		PrivatePath:  config.X509UploadPath,
+	})
+	if err != nil {
+		err := fmt.Errorf("Error processing bundle volume command: %s", err)
+		state["error"] = err
+		ui.Error(err.Error())
+		return multistep.ActionHalt
 	}
-	t = template.Must(template.New("bundleCmd").Parse(config.BundleVolCommand))
-	t.Execute(&bundleCmd, tData)
 
 	ui.Say("Bundling the volume...")
 	cmd = new(packer.RemoteCmd)
-	cmd.Command = bundleCmd.String()
+	cmd.Command = config.BundleVolCommand
 	if err := cmd.StartWithUi(comm, ui); err != nil {
 		state["error"] = fmt.Errorf("Error bundling volume: %s", err)
 		ui.Error(state["error"].(error).Error())
@@ -93,7 +82,7 @@ func (s *StepBundleVolume) Run(state map[string]interface{}) multistep.StepActio
 	}
 
 	// Store the manifest path
-	manifestName := bundlePrefix.String() + ".manifest.xml"
+	manifestName := config.BundlePrefix + ".manifest.xml"
 	state["manifest_name"] = manifestName
 	state["manifest_path"] = fmt.Sprintf(
 		"%s/%s", config.BundleDestination, manifestName)

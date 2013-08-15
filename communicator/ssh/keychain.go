@@ -10,6 +10,9 @@ import (
 	"io"
 )
 
+// SimpleKeychain makes it easy to use private keys in order to connect
+// via SSH, since the interface exposed by Go isn't the easiest to use
+// right away.
 type SimpleKeychain struct {
 	keys []interface{}
 }
@@ -18,6 +21,20 @@ type SimpleKeychain struct {
 func (k *SimpleKeychain) AddPEMKey(key string) (err error) {
 	block, _ := pem.Decode([]byte(key))
 	rsakey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return
+	}
+
+	k.keys = append(k.keys, rsakey)
+	return
+}
+
+// AddPEMKeyPassword adds a PEM encoded private key that is protected by
+// a password to the keychain.
+func (k *SimpleKeychain) AddPEMKeyPassword(key string, password string) (err error) {
+	block, _ := pem.Decode([]byte(key))
+	bytes, _ := x509.DecryptPEMBlock(block, []byte(password))
+	rsakey, err := x509.ParsePKCS1PrivateKey(bytes)
 	if err != nil {
 		return
 	}

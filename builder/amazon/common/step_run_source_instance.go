@@ -5,13 +5,17 @@ import (
 	"github.com/mitchellh/goamz/ec2"
 	"github.com/mitchellh/multistep"
 	"github.com/mitchellh/packer/packer"
+	"io/ioutil"
 	"log"
 )
 
 type StepRunSourceInstance struct {
 	ExpectedRootDevice string
 	InstanceType       string
+	UserData           string
+	UserDataFile       string
 	SourceAMI          string
+	IamInstanceProfile string
 	SubnetId           string
 
 	instance *ec2.Instance
@@ -23,20 +27,38 @@ func (s *StepRunSourceInstance) Run(state map[string]interface{}) multistep.Step
 	securityGroupId := state["securityGroupId"].(string)
 	ui := state["ui"].(packer.Ui)
 
+	userData := s.UserData
+	if s.UserDataFile != "" {
+		contents, err := ioutil.ReadFile(s.UserDataFile)
+		if err != nil {
+			state["error"] = fmt.Errorf("Problem reading user data file: %s", err)
+			return multistep.ActionHalt
+		}
+
+		userData = string(contents)
+	}
+
 	runOpts := &ec2.RunInstances{
-		KeyName:        keyName,
-		ImageId:        s.SourceAMI,
-		InstanceType:   s.InstanceType,
-		MinCount:       0,
-		MaxCount:       0,
-		SecurityGroups: []ec2.SecurityGroup{ec2.SecurityGroup{Id: securityGroupId}},
-		SubnetId:       s.SubnetId,
+		KeyName:            keyName,
+		ImageId:            s.SourceAMI,
+		InstanceType:       s.InstanceType,
+		UserData:           []byte(userData),
+		MinCount:           0,
+		MaxCount:           0,
+		SecurityGroups:     []ec2.SecurityGroup{ec2.SecurityGroup{Id: securityGroupId}},
+		IamInstanceProfile: s.IamInstanceProfile,
+		SubnetId:           s.SubnetId,
 	}
 
 	ui.Say("Launching a source AWS instance...")
 	imageResp, err := ec2conn.Images([]string{s.SourceAMI}, ec2.NewFilter())
 	if err != nil {
 		state["error"] = fmt.Errorf("There was a problem with the source AMI: %s", err)
+		return multistep.ActionHalt
+	}
+
+	if len(imageResp.Images) != 1 {
+		state["error"] = fmt.Errorf("The source AMI '%s' could not be found.", s.SourceAMI)
 		return multistep.ActionHalt
 	}
 
@@ -62,12 +84,13 @@ func (s *StepRunSourceInstance) Run(state map[string]interface{}) multistep.Step
 	ui.Say(fmt.Sprintf("Waiting for instance (%s) to become ready...", s.instance.InstanceId))
 	stateChange := StateChangeConf{
 		Conn:      ec2conn,
-		Instance:  s.instance,
 		Pending:   []string{"pending"},
 		Target:    "running",
+		Refresh:   InstanceStateRefreshFunc(ec2conn, s.instance),
 		StepState: state,
 	}
-	s.instance, err = WaitForState(&stateChange)
+	latestInstance, err := WaitForState(&stateChange)
+	s.instance = latestInstance.(*ec2.Instance)
 	if err != nil {
 		err := fmt.Errorf("Error waiting for instance (%s) to become ready: %s", s.instance.InstanceId, err)
 		state["error"] = err
@@ -95,10 +118,10 @@ func (s *StepRunSourceInstance) Cleanup(state map[string]interface{}) {
 	}
 
 	stateChange := StateChangeConf{
-		Conn:     ec2conn,
-		Instance: s.instance,
-		Pending:  []string{"pending", "running", "shutting-down", "stopped", "stopping"},
-		Target:   "running",
+		Conn:    ec2conn,
+		Pending: []string{"pending", "running", "shutting-down", "stopped", "stopping"},
+		Refresh: InstanceStateRefreshFunc(ec2conn, s.instance),
+		Target:  "terminated",
 	}
 
 	WaitForState(&stateChange)

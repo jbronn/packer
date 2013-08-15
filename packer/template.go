@@ -2,9 +2,12 @@ package packer
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"github.com/mitchellh/mapstructure"
+	jsonutil "github.com/mitchellh/packer/common/json"
+	"io"
+	"io/ioutil"
+	"os"
 	"sort"
 )
 
@@ -13,6 +16,7 @@ import (
 // "interface{}" pointers since we actually don't know what their contents
 // are until we read the "type" field.
 type rawTemplate struct {
+	Variables      map[string]string
 	Builders       []map[string]interface{}
 	Hooks          map[string][]string
 	Provisioners   []map[string]interface{}
@@ -22,40 +26,41 @@ type rawTemplate struct {
 // The Template struct represents a parsed template, parsed into the most
 // completed form it can be without additional processing by the caller.
 type Template struct {
-	Builders       map[string]rawBuilderConfig
+	Variables      map[string]string
+	Builders       map[string]RawBuilderConfig
 	Hooks          map[string][]string
-	PostProcessors [][]rawPostProcessorConfig
-	Provisioners   []rawProvisionerConfig
+	PostProcessors [][]RawPostProcessorConfig
+	Provisioners   []RawProvisionerConfig
 }
 
-// The rawBuilderConfig struct represents a raw, unprocessed builder
+// The RawBuilderConfig struct represents a raw, unprocessed builder
 // configuration. It contains the name of the builder as well as the
 // raw configuration. If requested, this is used to compile into a full
 // builder configuration at some point.
-type rawBuilderConfig struct {
+type RawBuilderConfig struct {
 	Name string
 	Type string
 
-	rawConfig interface{}
+	RawConfig interface{}
 }
 
-// rawPostProcessorConfig represents a raw, unprocessed post-processor
+// RawPostProcessorConfig represents a raw, unprocessed post-processor
 // configuration. It contains the type of the post processor as well as the
 // raw configuration that is handed to the post-processor for it to process.
-type rawPostProcessorConfig struct {
+type RawPostProcessorConfig struct {
 	Type              string
 	KeepInputArtifact bool `mapstructure:"keep_input_artifact"`
-	rawConfig         interface{}
+	RawConfig         interface{}
 }
 
-// rawProvisionerConfig represents a raw, unprocessed provisioner configuration.
+// RawProvisionerConfig represents a raw, unprocessed provisioner configuration.
 // It contains the type of the provisioner as well as the raw configuration
 // that is handed to the provisioner for it to process.
-type rawProvisionerConfig struct {
+type RawProvisionerConfig struct {
 	Type     string
 	Override map[string]interface{}
 
-	rawConfig interface{}
+	RawConfig interface{}
 }
 
 // ParseTemplate takes a byte slice and parses a Template from it, returning
@@ -65,31 +70,8 @@ type rawProvisionerConfig struct {
 // way.
 func ParseTemplate(data []byte) (t *Template, err error) {
 	var rawTplInterface interface{}
-	err = json.Unmarshal(data, &rawTplInterface)
+	err = jsonutil.Unmarshal(data, &rawTplInterface)
 	if err != nil {
-		syntaxErr, ok := err.(*json.SyntaxError)
-		if !ok {
-			return
-		}
-
-		// We have a syntax error. Extract out the line number and friends.
-		// https://groups.google.com/forum/#!topic/golang-nuts/fizimmXtVfc
-		newline := []byte{'\x0a'}
-
-		// Calculate the start/end position of the line where the error is
-		start := bytes.LastIndex(data[:syntaxErr.Offset], newline) + 1
-		end := len(data)
-		if idx := bytes.Index(data[start:], newline); idx >= 0 {
-			end = start + idx
-		}
-
-		// Count the line number we're on plus the offset in the line
-		line := bytes.Count(data[:start], newline) + 1
-		pos := int(syntaxErr.Offset) - start - 1
-
-		err = fmt.Errorf("Error in line %d, char %d: %s\n%s",
-			line, pos, syntaxErr, data[start:end])
-
 		return
 	}
 
@@ -123,14 +105,20 @@ func ParseTemplate(data []byte) (t *Template, err error) {
 	}
 
 	t = &Template{}
-	t.Builders = make(map[string]rawBuilderConfig)
+	t.Variables = make(map[string]string)
+	t.Builders = make(map[string]RawBuilderConfig)
 	t.Hooks = rawTpl.Hooks
-	t.PostProcessors = make([][]rawPostProcessorConfig, len(rawTpl.PostProcessors))
-	t.Provisioners = make([]rawProvisionerConfig, len(rawTpl.Provisioners))
+	t.PostProcessors = make([][]RawPostProcessorConfig, len(rawTpl.PostProcessors))
+	t.Provisioners = make([]RawProvisionerConfig, len(rawTpl.Provisioners))
+
+	// Gather all the variables
+	for k, v := range rawTpl.Variables {
+		t.Variables[k] = v
+	}
 
 	// Gather all the builders
 	for i, v := range rawTpl.Builders {
-		var raw rawBuilderConfig
+		var raw RawBuilderConfig
 		if err := mapstructure.Decode(v, &raw); err != nil {
 			if merr, ok := err.(*mapstructure.Error); ok {
 				for _, err := range merr.Errors {
@@ -165,7 +153,7 @@ func ParseTemplate(data []byte) (t *Template, err error) {
 		// itself doesn't know about, and it will cause a validation error.
 		delete(v, "name")
 
-		raw.rawConfig = v
+		raw.RawConfig = v
 
 		t.Builders[raw.Name] = raw
 	}
@@ -180,7 +168,7 @@ func ParseTemplate(data []byte) (t *Template, err error) {
 			continue
 		}
 
-		t.PostProcessors[i] = make([]rawPostProcessorConfig, len(rawPP))
+		t.PostProcessors[i] = make([]RawPostProcessorConfig, len(rawPP))
 		configs := t.PostProcessors[i]
 		for j, pp := range rawPP {
 			config := &configs[j]
@@ -201,7 +189,7 @@ func ParseTemplate(data []byte) (t *Template, err error) {
 				continue
 			}
 
-			config.rawConfig = pp
+			config.RawConfig = pp
 		}
 	}
 
@@ -230,7 +218,7 @@ func ParseTemplate(data []byte) (t *Template, err error) {
 		// actively reject them as invalid configuration.
 		delete(v, "override")
 
-		raw.rawConfig = v
+		raw.RawConfig = v
 	}
 
 	if len(t.Builders) == 0 {
@@ -245,6 +233,31 @@ func ParseTemplate(data []byte) (t *Template, err error) {
 	}
 
 	return
+}
+
+// ParseTemplateFile takes the given template file and parses it into
+// a single template.
+func ParseTemplateFile(path string) (*Template, error) {
+	var data []byte
+
+	if path == "-" {
+		// Read from stdin...
+		buf := new(bytes.Buffer)
+		_, err := io.Copy(buf, os.Stdin)
+		if err != nil {
+			return nil, err
+		}
+
+		data = buf.Bytes()
+	} else {
+		var err error
+		data, err = ioutil.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return ParseTemplate(data)
 }
 
 func parsePostProvisioner(i int, rawV interface{}) (result []map[string]interface{}, errors []error) {
@@ -369,7 +382,7 @@ func (t *Template) Build(name string, components *ComponentFinder) (b Build, err
 			current[i] = coreBuildPostProcessor{
 				processor:         pp,
 				processorType:     rawPP.Type,
-				config:            rawPP.rawConfig,
+				config:            rawPP.RawConfig,
 				keepInputArtifact: rawPP.KeepInputArtifact,
 			}
 		}
@@ -392,7 +405,7 @@ func (t *Template) Build(name string, components *ComponentFinder) (b Build, err
 		}
 
 		configs := make([]interface{}, 1, 2)
-		configs[0] = rawProvisioner.rawConfig
+		configs[0] = rawProvisioner.RawConfig
 
 		if rawProvisioner.Override != nil {
 			if override, ok := rawProvisioner.Override[name]; ok {
@@ -407,11 +420,12 @@ func (t *Template) Build(name string, components *ComponentFinder) (b Build, err
 	b = &coreBuild{
 		name:           name,
 		builder:        builder,
-		builderConfig:  builderConfig.rawConfig,
+		builderConfig:  builderConfig.RawConfig,
 		builderType:    builderConfig.Type,
 		hooks:          hooks,
 		postProcessors: postProcessors,
 		provisioners:   provisioners,
+		variables:      t.Variables,
 	}
 
 	return

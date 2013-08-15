@@ -37,8 +37,8 @@ Required:
 
 * `ami_name` (string) - The name of the resulting AMI that will appear
   when managing AMIs in the AWS console or via APIs. This must be unique.
-  To help make this unique, certain template parameters are available for
-  this value, which are documented below.
+  To help make this unique, use a function like `timestamp` (see
+  [configuration templates](/docs/templates/configuration-templates.html) for more info)
 
 * `instance_type` (string) - The EC2 instance type to use while building
   the AMI, such as "m1.small".
@@ -58,6 +58,25 @@ Required:
 
 Optional:
 
+* `ami_description` (string) - The description to set for the resulting
+  AMI(s). By default this description is empty.
+
+* `ami_groups` (array of string) - A list of groups that have access
+  to launch the resulting AMI(s). By default no groups have permission
+  to launch the AMI.
+
+* `ami_product_codes` (array of string) - A list of product codes to
+  associate with the AMI. By default no product codes are associated with
+  the AMI.
+
+* `ami_users` (array of string) - A list of account IDs that have access
+  to launch the resulting AMI(s). By default no additional users other than the user
+  creating the AMI has permissions to launch it.
+
+* `iam_instance_profile` (string) - The name of an
+  [IAM instance profile](http://docs.aws.amazon.com/IAM/latest/UserGuide/instance-profiles.html)
+  to launch the EC2 instance with.
+
 * `security_group_id` (string) - The ID (_not_ the name) of the security
   group to assign to the instance. By default this is not set and Packer
   will automatically create a new temporary security group to allow SSH
@@ -73,6 +92,16 @@ Optional:
 
 * `subnet_id` (string) - If using VPC, the ID of the subnet, such as
   "subnet-12345def", where Packer will launch the EC2 instance.
+
+* `tags` (object of key/value strings) - Tags applied to the AMI.
+
+* `user_data` (string) - User data to apply when launching the instance.
+  Note that you need to be careful about escaping characters due to the
+  templates being JSON. It is often more convenient to use `user_data_file`,
+  instead.
+
+* `user_data_file` (string) - Path to a file that will be used for the
+  user data when launching the instance.
 
 * `vpc_id` (string) - If launching into a VPC subnet, Packer needs the
   VPC ID in order to create a temporary security group within the VPC.
@@ -90,7 +119,7 @@ Here is a basic example. It is completely valid except for the access keys:
   "source_ami": "ami-de0d9eb7",
   "instance_type": "t1.micro",
   "ssh_username": "ubuntu",
-  "ami_name": "packer-quick-start {{.CreateTime}}"
+  "ami_name": "packer-quick-start {{timestamp}}",
 }
 </pre>
 
@@ -101,14 +130,24 @@ the section above for more information on what environmental variables Packer
 will look for.
 </div>
 
-## AMI Name Variables
+## Tag Example
 
-The AMI name specified by the `ami_name` configuration variable is actually
-treated as a [configuration template](/docs/templates/configuration-templates.html).
-Packer provides a set of variables that it will replace
-within the AMI name. This helps ensure the AMI name is unique, as AWS requires.
+Here is an example using the optional AMI tags. This will add the tags
+"OS_Version" and "Release" to the finished AMI.
 
-The available variables are shown below:
-
-* `CreateTime` - This will be replaced with the Unix timestamp of when
-  the AMI was built.
+<pre class="prettyprint">
+{
+  "type": "amazon-ebs",
+  "access_key": "YOUR KEY HERE",
+  "secret_key": "YOUR SECRET KEY HERE",
+  "region": "us-east-1",
+  "source_ami": "ami-de0d9eb7",
+  "instance_type": "t1.micro",
+  "ssh_username": "ubuntu",
+  "ami_name": "packer-quick-start {{timestamp}}",
+  "tags": {
+    "OS_Version": "Ubuntu",
+    "Release": "Latest"
+  }
+}
+</pre>

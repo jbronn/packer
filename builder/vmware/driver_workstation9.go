@@ -1,54 +1,53 @@
 package vmware
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
-// Workstation9LinuxDriver is a driver that can run VMware Workstation 9
-// on Linux.
-type Workstation9LinuxDriver struct {
+// Workstation9Driver is a driver that can run VMware Workstation 9
+// on non-Windows platforms.
+type Workstation9Driver struct {
 	AppPath          string
 	VdiskManagerPath string
 	VmrunPath        string
 }
 
-func (d *Workstation9LinuxDriver) CompactDisk(diskPath string) error {
+func (d *Workstation9Driver) CompactDisk(diskPath string) error {
 	defragCmd := exec.Command(d.VdiskManagerPath, "-d", diskPath)
-	if _, _, err := d.runAndLog(defragCmd); err != nil {
+	if _, _, err := runAndLog(defragCmd); err != nil {
 		return err
 	}
 
 	shrinkCmd := exec.Command(d.VdiskManagerPath, "-k", diskPath)
-	if _, _, err := d.runAndLog(shrinkCmd); err != nil {
+	if _, _, err := runAndLog(shrinkCmd); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (d *Workstation9LinuxDriver) CreateDisk(output string, size string) error {
+func (d *Workstation9Driver) CreateDisk(output string, size string) error {
 	cmd := exec.Command(d.VdiskManagerPath, "-c", "-s", size, "-a", "lsilogic", "-t", "1", output)
-	if _, _, err := d.runAndLog(cmd); err != nil {
+	if _, _, err := runAndLog(cmd); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (d *Workstation9LinuxDriver) IsRunning(vmxPath string) (bool, error) {
+func (d *Workstation9Driver) IsRunning(vmxPath string) (bool, error) {
 	vmxPath, err := filepath.Abs(vmxPath)
 	if err != nil {
 		return false, err
 	}
 
 	cmd := exec.Command(d.VmrunPath, "-T", "ws", "list")
-	stdout, _, err := d.runAndLog(cmd)
+	stdout, _, err := runAndLog(cmd)
 	if err != nil {
 		return false, err
 	}
@@ -62,107 +61,81 @@ func (d *Workstation9LinuxDriver) IsRunning(vmxPath string) (bool, error) {
 	return false, nil
 }
 
-func (d *Workstation9LinuxDriver) Start(vmxPath string, headless bool) error {
+func (d *Workstation9Driver) Start(vmxPath string, headless bool) error {
 	guiArgument := "gui"
 	if headless {
 		guiArgument = "nogui"
 	}
 
 	cmd := exec.Command(d.VmrunPath, "-T", "ws", "start", vmxPath, guiArgument)
-	if _, _, err := d.runAndLog(cmd); err != nil {
+	if _, _, err := runAndLog(cmd); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (d *Workstation9LinuxDriver) Stop(vmxPath string) error {
+func (d *Workstation9Driver) Stop(vmxPath string) error {
 	cmd := exec.Command(d.VmrunPath, "-T", "ws", "stop", vmxPath, "hard")
-	if _, _, err := d.runAndLog(cmd); err != nil {
+	if _, _, err := runAndLog(cmd); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (d *Workstation9LinuxDriver) Verify() error {
-	if err := d.findApp(); err != nil {
-		return fmt.Errorf("VMware Workstation application ('vmware') not found in path.")
+func (d *Workstation9Driver) Verify() error {
+	var err error
+	if d.AppPath == "" {
+		if d.AppPath, err = workstationFindVMware(); err != nil {
+			return err
+		}
 	}
 
-	if err := d.findVmrun(); err != nil {
-		return fmt.Errorf("Required application 'vmrun' not found in path.")
+	if d.VmrunPath == "" {
+		if d.VmrunPath, err = workstationFindVmrun(); err != nil {
+			return err
+		}
 	}
 
-	if err := d.findVdiskManager(); err != nil {
-		return fmt.Errorf("Required application 'vmware-vdiskmanager' not found in path.")
+	if d.VdiskManagerPath == "" {
+		if d.VdiskManagerPath, err = workstationFindVdiskManager(); err != nil {
+			return err
+		}
+	}
+
+	log.Printf("VMware app path: %s", d.AppPath)
+	log.Printf("vmrun path: %s", d.VmrunPath)
+	log.Printf("vdisk-manager path: %s", d.VdiskManagerPath)
+
+	if _, err := os.Stat(d.AppPath); err != nil {
+		return fmt.Errorf("VMware application not found: %s", d.AppPath)
+	}
+
+	if _, err := os.Stat(d.VmrunPath); err != nil {
+		return fmt.Errorf("'vmrun' application not found: %s", d.VmrunPath)
+	}
+
+	if _, err := os.Stat(d.VdiskManagerPath); err != nil {
+		return fmt.Errorf("'vmrun' application not found: %s", d.VdiskManagerPath)
 	}
 
 	// Check to see if it APPEARS to be licensed.
-	matches, err := filepath.Glob("/etc/vmware/license-*")
-	if err != nil {
-		return fmt.Errorf("Error looking for VMware license: %s", err)
-	}
-
-	if len(matches) == 0 {
-		return errors.New("Workstation does not appear to be licensed. Please license it.")
-	}
-
-	return nil
-}
-
-func (d *Workstation9LinuxDriver) findApp() error {
-	path, err := exec.LookPath("vmware")
-	if err != nil {
+	if err := workstationCheckLicense(); err != nil {
 		return err
 	}
-	d.AppPath = path
+
 	return nil
 }
 
-func (d *Workstation9LinuxDriver) findVdiskManager() error {
-	path, err := exec.LookPath("vmware-vdiskmanager")
-	if err != nil {
-		return err
-	}
-	d.VdiskManagerPath = path
-	return nil
+func (d *Workstation9Driver) ToolsIsoPath(flavor string) string {
+	return workstationToolsIsoPath(flavor)
 }
 
-func (d *Workstation9LinuxDriver) findVmrun() error {
-	path, err := exec.LookPath("vmrun")
-	if err != nil {
-		return err
-	}
-	d.VmrunPath = path
-	return nil
+func (d *Workstation9Driver) DhcpLeasesPath(device string) string {
+	return workstationDhcpLeasesPath(device)
 }
 
-func (d *Workstation9LinuxDriver) ToolsIsoPath(flavor string) string {
-	return "/usr/lib/vmware/isoimages/" + flavor + ".iso"
-}
-
-func (d *Workstation9LinuxDriver) DhcpLeasesPath(device string) string {
-	return "/etc/vmware/" + device + "/dhcpd/dhcpd.leases"
-}
-
-func (d *Workstation9LinuxDriver) runAndLog(cmd *exec.Cmd) (string, string, error) {
-	var stdout, stderr bytes.Buffer
-
-	log.Printf("Executing: %s %v", cmd.Path, cmd.Args[1:])
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-
-	stdoutString := strings.TrimSpace(stdout.String())
-	stderrString := strings.TrimSpace(stderr.String())
-
-	if _, ok := err.(*exec.ExitError); ok {
-		err = fmt.Errorf("VMware error: %s", stderrString)
-	}
-
-	log.Printf("stdout: %s", stdoutString)
-	log.Printf("stderr: %s", stderrString)
-
-	return stdout.String(), stderr.String(), err
+func (d *Workstation9Driver) VmnetnatConfPath() string {
+	return workstationVmnetnatConfPath()
 }

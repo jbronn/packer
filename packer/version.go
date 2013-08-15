@@ -10,7 +10,7 @@ import (
 var GitCommit string
 
 // The version of packer.
-const Version = "0.2.2"
+const Version = "0.3.2"
 
 // Any pre-release marker for the version. If this is "" (empty string),
 // then it means that it is a final release. Otherwise, this is the
@@ -27,6 +27,10 @@ command-line flags for this command.`
 }
 
 func (versionCommand) Run(env Environment, args []string) int {
+	env.Ui().Machine("version", Version)
+	env.Ui().Machine("version-prelease", VersionPrerelease)
+	env.Ui().Machine("version-commit", GitCommit)
+
 	var versionString bytes.Buffer
 	fmt.Fprintf(&versionString, "Packer v%s", Version)
 	if VersionPrerelease != "" {

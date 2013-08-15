@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mitchellh/multistep"
-	"github.com/mitchellh/packer/builder/common"
+	"github.com/mitchellh/packer/common"
 	"github.com/mitchellh/packer/packer"
 	"log"
 	"os"
@@ -18,7 +18,6 @@ const BuilderId = "mitchellh.virtualbox"
 
 type Builder struct {
 	config config
-	driver Driver
 	runner multistep.Runner
 }
 
@@ -62,6 +61,7 @@ type config struct {
 	bootWait        time.Duration ``
 	shutdownTimeout time.Duration ``
 	sshWaitTimeout  time.Duration ``
+	tpl             *common.Template
 }
 
 func (b *Builder) Prepare(raws ...interface{}) error {
@@ -69,6 +69,12 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 	if err != nil {
 		return err
 	}
+
+	b.config.tpl, err = common.NewTemplate()
+	if err != nil {
+		return err
+	}
+	b.config.tpl.UserVars = b.config.PackerUserVars
 
 	// Accumulate any errors
 	errs := common.CheckUnusedConfig(md)
@@ -127,6 +133,63 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 
 	if b.config.VMName == "" {
 		b.config.VMName = fmt.Sprintf("packer-%s", b.config.PackerBuildName)
+	}
+
+	// Errors
+	templates := map[string]*string{
+		"guest_additions_sha256":  &b.config.GuestAdditionsSHA256,
+		"guest_os_type":           &b.config.GuestOSType,
+		"http_directory":          &b.config.HTTPDir,
+		"iso_checksum":            &b.config.ISOChecksum,
+		"iso_checksum_type":       &b.config.ISOChecksumType,
+		"iso_url":                 &b.config.ISOUrl,
+		"output_directory":        &b.config.OutputDir,
+		"shutdown_command":        &b.config.ShutdownCommand,
+		"ssh_password":            &b.config.SSHPassword,
+		"ssh_username":            &b.config.SSHUser,
+		"virtualbox_version_file": &b.config.VBoxVersionFile,
+		"vm_name":                 &b.config.VMName,
+		"boot_wait":               &b.config.RawBootWait,
+		"shutdown_timeout":        &b.config.RawShutdownTimeout,
+		"ssh_wait_timeout":        &b.config.RawSSHWaitTimeout,
+	}
+
+	for n, ptr := range templates {
+		var err error
+		*ptr, err = b.config.tpl.Process(*ptr, nil)
+		if err != nil {
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("Error processing %s: %s", n, err))
+		}
+	}
+
+	validates := map[string]*string{
+		"guest_additions_path": &b.config.GuestAdditionsPath,
+		"guest_additions_url":  &b.config.GuestAdditionsURL,
+	}
+
+	for n, ptr := range validates {
+		if err := b.config.tpl.Validate(*ptr); err != nil {
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("Error parsing %s: %s", n, err))
+		}
+	}
+
+	for i, command := range b.config.BootCommand {
+		if err := b.config.tpl.Validate(command); err != nil {
+			errs = packer.MultiErrorAppend(errs,
+				fmt.Errorf("Error processing boot_command[%d]: %s", i, err))
+		}
+	}
+
+	for i, file := range b.config.FloppyFiles {
+		var err error
+		b.config.FloppyFiles[i], err = b.config.tpl.Process(file, nil)
+		if err != nil {
+			errs = packer.MultiErrorAppend(errs,
+				fmt.Errorf("Error processing floppy_files[%d]: %s",
+					i, err))
+		}
 	}
 
 	if b.config.HTTPPortMin > b.config.HTTPPortMax {
@@ -195,14 +258,6 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		b.config.GuestAdditionsSHA256 = strings.ToLower(b.config.GuestAdditionsSHA256)
 	}
 
-	if b.config.GuestAdditionsURL != "" {
-		b.config.GuestAdditionsURL, err = common.DownloadableURL(b.config.GuestAdditionsURL)
-		if err != nil {
-			errs = packer.MultiErrorAppend(
-				errs, fmt.Errorf("guest_additions_url: %s", err))
-		}
-	}
-
 	if !b.config.PackerForce {
 		if _, err := os.Stat(b.config.OutputDir); err == nil {
 			errs = packer.MultiErrorAppend(
@@ -247,10 +302,13 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 			errs, fmt.Errorf("Failed parsing ssh_wait_timeout: %s", err))
 	}
 
-	b.driver, err = b.newDriver()
-	if err != nil {
-		errs = packer.MultiErrorAppend(
-			errs, fmt.Errorf("Failed creating VirtualBox driver: %s", err))
+	for i, args := range b.config.VBoxManage {
+		for j, arg := range args {
+			if err := b.config.tpl.Validate(arg); err != nil {
+				errs = packer.MultiErrorAppend(errs,
+					fmt.Errorf("Error processing vboxmanage[%d][%d]: %s", i, j, err))
+			}
+		}
 	}
 
 	if errs != nil && len(errs.Errors) > 0 {
@@ -261,6 +319,12 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 }
 
 func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packer.Artifact, error) {
+	// Create the driver that we'll use to communicate with VirtualBox
+	driver, err := b.newDriver()
+	if err != nil {
+		return nil, fmt.Errorf("Failed creating VirtualBox driver: %s", err)
+	}
+
 	steps := []multistep.Step{
 		new(stepDownloadGuestAdditions),
 		new(stepDownloadISO),
@@ -298,7 +362,7 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 	state := make(map[string]interface{})
 	state["cache"] = cache
 	state["config"] = &b.config
-	state["driver"] = b.driver
+	state["driver"] = driver
 	state["hook"] = hook
 	state["ui"] = ui
 

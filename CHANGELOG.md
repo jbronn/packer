@@ -1,9 +1,126 @@
-## 0.2.2 (unreleased)
+## 0.3.2 (unreleased)
+
+FEATURES:
+
+* New command: `packer inspect`. This command tells you the components of
+  a template. It respects the `-machine-readable` flag as well so you can
+  parse out components of a template.
+* Packer will detect its own crashes (always a bug) and save a "crash.log"
+  file.
+
+IMPROVEMENTS:
+
+* core: built with Go 1.1.2
+* core: packer help output now loads much faster.
+* builder/virtualbox: guest_additions_url can now use the `Version`
+  variable to get the VirtualBox version. [GH-272]
+* builder/virtualbox: Do not check for VirtualBox as part of template
+  validation; only check at execution.
+* builder/vmware: Do not check for VMware as part of template validation;
+  only check at execution.
+* command/build: A path of "-" will read the template from stdin.
+
+BUG FIXES:
+
+* builder/amazon-instance: send IAM instance profile data. [GH-294]
+* builder/virtualbox: dowload progress won't be shown until download
+  actually starts. [GH-288]
+* builder/vmware: dowload progress won't be shown until download
+  actually starts. [GH-288]
+
+## 0.3.1 (August 12, 2013)
+
+IMPROVEMENTS:
+
+* provisioner/shell: New setting `start_retry_timeout` which is the timeout
+  for the provisioner to attempt to _start_ the remote process. This allows
+  the shell provisioner to work properly with reboots. [GH-260]
+
+BUG FIXES:
+
+* core: Remote command output containing '\r' now looks much better
+  within the Packer output.
+* builder/vmware: Fix issue with finding driver files. [GH-279]
+* provisioner/salt-masterless: Uploads work properly from Windows. [GH-276]
+
+## 0.3.0 (August 12, 2013)
+
+BACKWARDS INCOMPATIBILITIES:
+
+* All `{{.CreateTime}}` variables within templates (such as for AMI names)
+  are now replaced with `{{timestamp}}`. Run `packer fix` to fix your
+  templates.
+
+FEATURES:
+
+* **User Variables** allow you to specify variables within your templates
+  that can be replaced using the command-line, files, or environmental
+  variables. This dramatically improves the portability of packer templates.
+  See the documentation for more information.
+* **Machine-readable output** can be enabled by passing the
+  `-machine-readable` flag to _any_ Packer command.
+* All strings in a template are now processed for variables/functions,
+  so things like `{{timestamp}}` can be used everywhere. More features will
+  be added in the future.
+* The `amazon` builders (all of them) can now have attributes of their
+  resulting AMIs modified, such as access permissions and product codes.
+
+IMPROVEMENTS:
+
+* builder/amazon/all: User data can be passed to start the instances. [GH-253]
+* provisioner/salt-masterless: `local_state_tree` is no longer required,
+  allowing you to use shell provisioner (or others) to bring this down.
+  [GH-269]
+
+BUG FIXES:
+
+* builder/amazon/ebs,instance: Retry deleing security group a few times.
+  [GH-278]
+* builder/vmware: Workstation works on Windows XP now. [GH-238]
+* builder/vmware: Look for files on Windows in multiple locations
+  using multiple environmental variables. [GH-263]
+* provisioner/salt-masterless: states aren't deleted after the run
+  anymore. [GH-265]
+* provisioner/salt-masterless: error if any commands exit with a non-zero
+  exit status. [GH-266]
+
+## 0.2.3 (August 7, 2013)
+
+IMPROVEMENTS:
+
+* builder/amazon/all: Added Amazon AMI tag support [GH-233]
+
+BUG FIXES:
+
+* core: Absolute/relative filepaths on Windows now work for iso_url
+  and other settings. [GH-240]
+* builder/amazon/all: instance info is refreshed while waiting for SSH,
+  allowing Packer to see updated IP/DNS info. [GH-243]
+
+## 0.2.2 (August 1, 2013)
+
+FEATURES:
+
+* New builder: `amazon-chroot` can create EBS-backed AMIs without launching
+  a new EC2 instance. This can shave minutes off of the AMI creation process.
+  See the docs for more info.
+* New provisioner: `salt-masterless` will provision the node using Salt
+  without a master.
+* The `vmware` builder now works with Workstation 9 on Windows. [GH-222]
+* The `vmware` builder now works with Player 5 on Linux. [GH-190]
+
+IMPROVEMENTS:
+
+* core: Colors won't be outputted on Windows unless in Cygwin.
+* builder/amazon/all: Added `iam_instance_profile` to launch the source
+  image with a given IAM profile. [GH-226]
 
 BUG FIXES:
 
 * builder/virtualbox,vmware: relative paths work properly as URL
   configurations. [GH-215]
+* builder/virtualbox,vmware: fix race condition in deleting the output
+  directory on Windows by retrying.
 
 ## 0.2.1 (July 26, 2013)
 

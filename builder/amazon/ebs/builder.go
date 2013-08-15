@@ -6,16 +6,13 @@
 package ebs
 
 import (
-	"errors"
 	"fmt"
-	"github.com/mitchellh/goamz/aws"
 	"github.com/mitchellh/goamz/ec2"
 	"github.com/mitchellh/multistep"
 	awscommon "github.com/mitchellh/packer/builder/amazon/common"
-	"github.com/mitchellh/packer/builder/common"
+	"github.com/mitchellh/packer/common"
 	"github.com/mitchellh/packer/packer"
 	"log"
-	"text/template"
 )
 
 // The unique ID for this builder
@@ -24,10 +21,13 @@ const BuilderId = "mitchellh.amazonebs"
 type config struct {
 	common.PackerConfig    `mapstructure:",squash"`
 	awscommon.AccessConfig `mapstructure:",squash"`
+	awscommon.AMIConfig    `mapstructure:",squash"`
 	awscommon.RunConfig    `mapstructure:",squash"`
 
-	// Configuration of the resulting AMI
-	AMIName string `mapstructure:"ami_name"`
+	// Tags for the AMI
+	Tags map[string]string
+
+	tpl *common.Template
 }
 
 type Builder struct {
@@ -41,22 +41,39 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		return err
 	}
 
-	// Accumulate any errors
-	errs := common.CheckUnusedConfig(md)
-	errs = packer.MultiErrorAppend(errs, b.config.AccessConfig.Prepare()...)
-	errs = packer.MultiErrorAppend(errs, b.config.RunConfig.Prepare()...)
+	b.config.tpl, err = common.NewTemplate()
+	if err != nil {
+		return err
+	}
+	b.config.tpl.UserVars = b.config.PackerUserVars
 
 	// Accumulate any errors
-	if b.config.AMIName == "" {
-		errs = packer.MultiErrorAppend(
-			errs, errors.New("ami_name must be specified"))
-	} else {
-		_, err = template.New("ami").Parse(b.config.AMIName)
+	errs := common.CheckUnusedConfig(md)
+	errs = packer.MultiErrorAppend(errs, b.config.AccessConfig.Prepare(b.config.tpl)...)
+	errs = packer.MultiErrorAppend(errs, b.config.AMIConfig.Prepare(b.config.tpl)...)
+	errs = packer.MultiErrorAppend(errs, b.config.RunConfig.Prepare(b.config.tpl)...)
+
+	// Accumulate any errors
+	newTags := make(map[string]string)
+	for k, v := range b.config.Tags {
+		k, err = b.config.tpl.Process(k, nil)
 		if err != nil {
-			errs = packer.MultiErrorAppend(
-				errs, fmt.Errorf("Failed parsing ami_name: %s", err))
+			errs = packer.MultiErrorAppend(errs,
+				fmt.Errorf("Error processing tag key %s: %s", k, err))
+			continue
 		}
+
+		v, err = b.config.tpl.Process(v, nil)
+		if err != nil {
+			errs = packer.MultiErrorAppend(errs,
+				fmt.Errorf("Error processing tag value '%s': %s", v, err))
+			continue
+		}
+
+		newTags[k] = v
 	}
+
+	b.config.Tags = newTags
 
 	if errs != nil && len(errs.Errors) > 0 {
 		return errs
@@ -67,9 +84,9 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 }
 
 func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packer.Artifact, error) {
-	region, ok := aws.Regions[b.config.Region]
-	if !ok {
-		panic("region not found")
+	region, err := b.config.Region()
+	if err != nil {
+		return nil, err
 	}
 
 	auth, err := b.config.AccessConfig.Auth()
@@ -97,17 +114,26 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		&awscommon.StepRunSourceInstance{
 			ExpectedRootDevice: "ebs",
 			InstanceType:       b.config.InstanceType,
+			UserData:           b.config.UserData,
+			UserDataFile:       b.config.UserDataFile,
 			SourceAMI:          b.config.SourceAmi,
+			IamInstanceProfile: b.config.IamInstanceProfile,
 			SubnetId:           b.config.SubnetId,
 		},
 		&common.StepConnectSSH{
-			SSHAddress:     awscommon.SSHAddress(b.config.SSHPort),
+			SSHAddress:     awscommon.SSHAddress(ec2conn, b.config.SSHPort),
 			SSHConfig:      awscommon.SSHConfig(b.config.SSHUsername),
 			SSHWaitTimeout: b.config.SSHTimeout(),
 		},
 		&common.StepProvision{},
 		&stepStopInstance{},
 		&stepCreateAMI{},
+		&awscommon.StepCreateTags{Tags: b.config.Tags},
+		&awscommon.StepModifyAMIAttributes{
+			Description: b.config.AMIDescription,
+			Users:       b.config.AMIUsers,
+			Groups:      b.config.AMIGroups,
+		},
 	}
 
 	// Run!

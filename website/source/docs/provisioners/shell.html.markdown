@@ -53,8 +53,7 @@ Optional parameters:
 
 * `execute_command` (string) - The command to use to execute the script.
   By default this is `chmod +x {{ .Path }}; {{ .Vars }} {{ .Path }}`. The value of this is
-  treated as [configuration template](/docs/templates/configuration-
-  templates.html). There are two available variables: `Path`, which is
+  treated as [configuration template](/docs/templates/configuration-templates.html). There are two available variables: `Path`, which is
   the path to the script to run, and `Vars`, which is the list of
   `environment_vars`, if configured.
 
@@ -67,6 +66,12 @@ Optional parameters:
   in the machine. This defaults to "/tmp/script.sh". This value must be
   a writable location and any parent directories must already exist.
 
+* `start_retry_timeout` (string) - The amount of time to attempt to
+  _start_ the remote process. By default this is "5m" or 5 minutes. This
+  setting exists in order to deal with times when SSH may restart, such as
+  a system reboot. Set this to a higher value if reboots take a longer
+  amount of time.
+
 ## Execute Command Example
 
 To many new users, the `execute_command` is puzzling. However, it provides
@@ -78,11 +83,13 @@ and has the password "packer" for sudo usage, then you'll likely want to
 change `execute_command` to be:
 
 ```
-"echo 'packer' | sudo -S sh '{{ .Path }}'"
+"echo 'packer' | {{ .Vars }} sudo -E -S sh '{{ .Path }}'"
 ```
 
 The `-S` flag tells `sudo` to read the password from stdin, which in this
-case is being piped in with the value of "packer".
+case is being piped in with the value of "packer". The `-E` flag tells `sudo`
+to preserve the environment, allowing our environmental variables to work
+within the script.
 
 By setting the `execute_command` to this, your script(s) can run with
 root privileges without worrying about password prompts.

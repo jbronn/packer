@@ -5,16 +5,14 @@ package instance
 import (
 	"errors"
 	"fmt"
-	"github.com/mitchellh/goamz/aws"
 	"github.com/mitchellh/goamz/ec2"
 	"github.com/mitchellh/multistep"
 	awscommon "github.com/mitchellh/packer/builder/amazon/common"
-	"github.com/mitchellh/packer/builder/common"
+	"github.com/mitchellh/packer/common"
 	"github.com/mitchellh/packer/packer"
 	"log"
 	"os"
 	"strings"
-	"text/template"
 )
 
 // The unique ID for this builder
@@ -25,18 +23,21 @@ const BuilderId = "mitchellh.amazon.instance"
 type Config struct {
 	common.PackerConfig    `mapstructure:",squash"`
 	awscommon.AccessConfig `mapstructure:",squash"`
+	awscommon.AMIConfig    `mapstructure:",squash"`
 	awscommon.RunConfig    `mapstructure:",squash"`
 
 	AccountId           string `mapstructure:"account_id"`
-	AMIName             string `mapstructure:"ami_name"`
 	BundleDestination   string `mapstructure:"bundle_destination"`
 	BundlePrefix        string `mapstructure:"bundle_prefix"`
 	BundleUploadCommand string `mapstructure:"bundle_upload_command"`
 	BundleVolCommand    string `mapstructure:"bundle_vol_command"`
 	S3Bucket            string `mapstructure:"s3_bucket"`
+	Tags                map[string]string
 	X509CertPath        string `mapstructure:"x509_cert_path"`
 	X509KeyPath         string `mapstructure:"x509_key_path"`
 	X509UploadPath      string `mapstructure:"x509_upload_path"`
+
+	tpl *common.Template
 }
 
 type Builder struct {
@@ -50,12 +51,18 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		return err
 	}
 
+	b.config.tpl, err = common.NewTemplate()
+	if err != nil {
+		return err
+	}
+	b.config.tpl.UserVars = b.config.PackerUserVars
+
 	if b.config.BundleDestination == "" {
 		b.config.BundleDestination = "/tmp"
 	}
 
 	if b.config.BundlePrefix == "" {
-		b.config.BundlePrefix = "image-{{.CreateTime}}"
+		b.config.BundlePrefix = "image-{{timestamp}}"
 	}
 
 	if b.config.BundleUploadCommand == "" {
@@ -87,24 +94,46 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 
 	// Accumulate any errors
 	errs := common.CheckUnusedConfig(md)
-	errs = packer.MultiErrorAppend(errs, b.config.AccessConfig.Prepare()...)
-	errs = packer.MultiErrorAppend(errs, b.config.RunConfig.Prepare()...)
+	errs = packer.MultiErrorAppend(errs, b.config.AccessConfig.Prepare(b.config.tpl)...)
+	errs = packer.MultiErrorAppend(errs, b.config.AMIConfig.Prepare(b.config.tpl)...)
+	errs = packer.MultiErrorAppend(errs, b.config.RunConfig.Prepare(b.config.tpl)...)
+
+	validates := map[string]*string{
+		"bundle_upload_command": &b.config.BundleUploadCommand,
+		"bundle_vol_command":    &b.config.BundleVolCommand,
+	}
+
+	for n, ptr := range validates {
+		if err := b.config.tpl.Validate(*ptr); err != nil {
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("Error parsing %s: %s", n, err))
+		}
+	}
+
+	templates := map[string]*string{
+		"account_id":         &b.config.AccountId,
+		"ami_name":           &b.config.AMIName,
+		"bundle_destination": &b.config.BundleDestination,
+		"bundle_prefix":      &b.config.BundlePrefix,
+		"s3_bucket":          &b.config.S3Bucket,
+		"x509_cert_path":     &b.config.X509CertPath,
+		"x509_key_path":      &b.config.X509KeyPath,
+		"x509_upload_path":   &b.config.X509UploadPath,
+	}
+
+	for n, ptr := range templates {
+		var err error
+		*ptr, err = b.config.tpl.Process(*ptr, nil)
+		if err != nil {
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("Error processing %s: %s", n, err))
+		}
+	}
 
 	if b.config.AccountId == "" {
 		errs = packer.MultiErrorAppend(errs, errors.New("account_id is required"))
 	} else {
 		b.config.AccountId = strings.Replace(b.config.AccountId, "-", "", -1)
-	}
-
-	if b.config.AMIName == "" {
-		errs = packer.MultiErrorAppend(
-			errs, errors.New("ami_name must be specified"))
-	} else {
-		_, err = template.New("ami").Parse(b.config.AMIName)
-		if err != nil {
-			errs = packer.MultiErrorAppend(
-				errs, fmt.Errorf("Failed parsing ami_name: %s", err))
-		}
 	}
 
 	if b.config.S3Bucket == "" {
@@ -134,9 +163,9 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 }
 
 func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packer.Artifact, error) {
-	region, ok := aws.Regions[b.config.Region]
-	if !ok {
-		panic("region not found")
+	region, err := b.config.Region()
+	if err != nil {
+		return nil, err
 	}
 
 	auth, err := b.config.AccessConfig.Auth()
@@ -164,11 +193,14 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		&awscommon.StepRunSourceInstance{
 			ExpectedRootDevice: "instance-store",
 			InstanceType:       b.config.InstanceType,
+			IamInstanceProfile: b.config.IamInstanceProfile,
+			UserData:           b.config.UserData,
+			UserDataFile:       b.config.UserDataFile,
 			SourceAMI:          b.config.SourceAmi,
 			SubnetId:           b.config.SubnetId,
 		},
 		&common.StepConnectSSH{
-			SSHAddress:     awscommon.SSHAddress(b.config.SSHPort),
+			SSHAddress:     awscommon.SSHAddress(ec2conn, b.config.SSHPort),
 			SSHConfig:      awscommon.SSHConfig(b.config.SSHUsername),
 			SSHWaitTimeout: b.config.SSHTimeout(),
 		},
@@ -177,6 +209,13 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 		&StepBundleVolume{},
 		&StepUploadBundle{},
 		&StepRegisterAMI{},
+		&awscommon.StepCreateTags{Tags: b.config.Tags},
+		&awscommon.StepModifyAMIAttributes{
+			Description:  b.config.AMIDescription,
+			Users:        b.config.AMIUsers,
+			Groups:       b.config.AMIGroups,
+			ProductCodes: b.config.AMIProductCodes,
+		},
 	}
 
 	// Run!

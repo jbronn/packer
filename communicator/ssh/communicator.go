@@ -87,6 +87,7 @@ func (c *comm) Start(cmd *packer.RemoteCmd) (err error) {
 			}
 		}
 
+		log.Printf("remote command exited with '%d': %s", exitStatus, cmd.Command)
 		cmd.SetExited(exitStatus)
 	}()
 
@@ -204,9 +205,14 @@ func (c *comm) Download(string, io.Writer) error {
 	panic("not implemented yet")
 }
 
-func (c *comm) newSession() (*ssh.Session, error) {
+func (c *comm) newSession() (session *ssh.Session, err error) {
 	log.Println("opening new ssh session")
-	session, err := c.client.NewSession()
+	if c.client == nil {
+		err = errors.New("client not available")
+	} else {
+		session, err = c.client.NewSession()
+	}
+
 	if err != nil {
 		log.Printf("ssh session open error: '%s', attempting reconnect", err)
 		if err := c.reconnect(); err != nil {
@@ -223,6 +229,10 @@ func (c *comm) reconnect() (err error) {
 	if c.conn != nil {
 		c.conn.Close()
 	}
+
+	// Set the conn and client to nil since we'll recreate it
+	c.conn = nil
+	c.client = nil
 
 	log.Printf("reconnecting to TCP connection for SSH")
 	c.conn, err = c.config.Connection()

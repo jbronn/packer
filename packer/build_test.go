@@ -23,6 +23,7 @@ func testBuild() *coreBuild {
 				coreBuildPostProcessor{&TestPostProcessor{artifactId: "pp"}, "testPP", 42, true},
 			},
 		},
+		variables: make(map[string]string),
 	}
 }
 
@@ -30,6 +31,15 @@ func testBuilder() *TestBuilder {
 	return &TestBuilder{}
 }
 
+func testDefaultPackerConfig() map[string]interface{} {
+	return map[string]interface{}{
+		BuildNameConfigKey:     "test",
+		BuilderTypeConfigKey:   "foo",
+		DebugConfigKey:         false,
+		ForceConfigKey:         false,
+		UserVariablesConfigKey: make(map[string]string),
+	}
+}
 func TestBuild_Name(t *testing.T) {
 	assert := asserts.NewTestingAsserts(t, true)
 
@@ -39,18 +49,12 @@ func TestBuild_Name(t *testing.T) {
 
 func TestBuild_Prepare(t *testing.T) {
 	assert := asserts.NewTestingAsserts(t, true)
-
-	packerConfig := map[string]interface{}{
-		BuildNameConfigKey:   "test",
-		BuilderTypeConfigKey: "foo",
-		DebugConfigKey:       false,
-		ForceConfigKey:       false,
-	}
+	packerConfig := testDefaultPackerConfig()
 
 	build := testBuild()
 	builder := build.builder.(*TestBuilder)
 
-	build.Prepare()
+	build.Prepare(nil)
 	assert.True(builder.prepareCalled, "prepare should be called")
 	assert.Equal(builder.prepareConfig, []interface{}{42, packerConfig}, "prepare config should be 42")
 
@@ -67,7 +71,7 @@ func TestBuild_Prepare(t *testing.T) {
 
 func TestBuild_Prepare_Twice(t *testing.T) {
 	build := testBuild()
-	if err := build.Prepare(); err != nil {
+	if err := build.Prepare(nil); err != nil {
 		t.Fatalf("bad error: %s", err)
 	}
 
@@ -82,24 +86,20 @@ func TestBuild_Prepare_Twice(t *testing.T) {
 		}
 	}()
 
-	build.Prepare()
+	build.Prepare(nil)
 }
 
 func TestBuild_Prepare_Debug(t *testing.T) {
 	assert := asserts.NewTestingAsserts(t, true)
 
-	packerConfig := map[string]interface{}{
-		BuildNameConfigKey:   "test",
-		BuilderTypeConfigKey: "foo",
-		DebugConfigKey:       true,
-		ForceConfigKey:       false,
-	}
+	packerConfig := testDefaultPackerConfig()
+	packerConfig[DebugConfigKey] = true
 
 	build := testBuild()
 	builder := build.builder.(*TestBuilder)
 
 	build.SetDebug(true)
-	build.Prepare()
+	build.Prepare(nil)
 	assert.True(builder.prepareCalled, "prepare should be called")
 	assert.Equal(builder.prepareConfig, []interface{}{42, packerConfig}, "prepare config should be 42")
 
@@ -109,6 +109,64 @@ func TestBuild_Prepare_Debug(t *testing.T) {
 	assert.Equal(prov.prepConfigs, []interface{}{42, packerConfig}, "prepare should be called with proper config")
 }
 
+func TestBuildPrepare_variables_default(t *testing.T) {
+	packerConfig := testDefaultPackerConfig()
+	packerConfig[UserVariablesConfigKey] = map[string]string{
+		"foo": "bar",
+	}
+
+	build := testBuild()
+	build.variables["foo"] = "bar"
+	builder := build.builder.(*TestBuilder)
+
+	err := build.Prepare(nil)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	if !builder.prepareCalled {
+		t.Fatal("prepare should be called")
+	}
+
+	if !reflect.DeepEqual(builder.prepareConfig[1], packerConfig) {
+		t.Fatalf("prepare bad: %#v", builder.prepareConfig[1])
+	}
+}
+
+func TestBuildPrepare_variables_nonexist(t *testing.T) {
+	build := testBuild()
+	build.variables["foo"] = "bar"
+
+	err := build.Prepare(map[string]string{"bar": "baz"})
+	if err == nil {
+		t.Fatal("should have had error")
+	}
+}
+
+func TestBuildPrepare_variables_override(t *testing.T) {
+	packerConfig := testDefaultPackerConfig()
+	packerConfig[UserVariablesConfigKey] = map[string]string{
+		"foo": "baz",
+	}
+
+	build := testBuild()
+	build.variables["foo"] = "bar"
+	builder := build.builder.(*TestBuilder)
+
+	err := build.Prepare(map[string]string{"foo": "baz"})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	if !builder.prepareCalled {
+		t.Fatal("prepare should be called")
+	}
+
+	if !reflect.DeepEqual(builder.prepareConfig[1], packerConfig) {
+		t.Fatalf("prepare bad: %#v", builder.prepareConfig[1])
+	}
+}
+
 func TestBuild_Run(t *testing.T) {
 	assert := asserts.NewTestingAsserts(t, true)
 
@@ -116,7 +174,7 @@ func TestBuild_Run(t *testing.T) {
 	ui := testUi()
 
 	build := testBuild()
-	build.Prepare()
+	build.Prepare(nil)
 	artifacts, err := build.Run(ui, cache)
 	assert.Nil(err, "should not error")
 	assert.Equal(len(artifacts), 2, "should have two artifacts")
@@ -152,7 +210,7 @@ func TestBuild_Run_Artifacts(t *testing.T) {
 	build := testBuild()
 	build.postProcessors = [][]coreBuildPostProcessor{}
 
-	build.Prepare()
+	build.Prepare(nil)
 	artifacts, err := build.Run(ui, cache)
 	if err != nil {
 		t.Fatalf("err: %s", err)
@@ -177,7 +235,7 @@ func TestBuild_Run_Artifacts(t *testing.T) {
 		},
 	}
 
-	build.Prepare()
+	build.Prepare(nil)
 	artifacts, err = build.Run(ui, cache)
 	if err != nil {
 		t.Fatalf("err: %s", err)
@@ -205,7 +263,7 @@ func TestBuild_Run_Artifacts(t *testing.T) {
 		},
 	}
 
-	build.Prepare()
+	build.Prepare(nil)
 	artifacts, err = build.Run(ui, cache)
 	if err != nil {
 		t.Fatalf("err: %s", err)
@@ -235,7 +293,7 @@ func TestBuild_Run_Artifacts(t *testing.T) {
 		},
 	}
 
-	build.Prepare()
+	build.Prepare(nil)
 	artifacts, err = build.Run(ui, cache)
 	if err != nil {
 		t.Fatalf("err: %s", err)
@@ -262,7 +320,7 @@ func TestBuild_Run_Artifacts(t *testing.T) {
 		},
 	}
 
-	build.Prepare()
+	build.Prepare(nil)
 	artifacts, err = build.Run(ui, cache)
 	if err != nil {
 		t.Fatalf("err: %s", err)

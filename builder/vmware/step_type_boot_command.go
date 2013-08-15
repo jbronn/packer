@@ -1,15 +1,14 @@
 package vmware
 
 import (
-	"bytes"
 	"fmt"
 	"github.com/mitchellh/go-vnc"
 	"github.com/mitchellh/multistep"
 	"github.com/mitchellh/packer/packer"
 	"log"
 	"net"
+	"runtime"
 	"strings"
-	"text/template"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -64,7 +63,13 @@ func (s *stepTypeBootCommand) Run(state map[string]interface{}) multistep.StepAc
 	log.Printf("Connected to VNC desktop: %s", c.DesktopName)
 
 	// Determine the host IP
-	ipFinder := &IfconfigIPFinder{"vmnet8"}
+	var ipFinder HostIPFinder
+	if runtime.GOOS == "windows" {
+		ipFinder = new(VMnetNatConfIPFinder)
+	} else {
+		ipFinder = &IfconfigIPFinder{Device: "vmnet8"}
+	}
+
 	hostIp, err := ipFinder.HostIP()
 	if err != nil {
 		err := fmt.Errorf("Error detecting host IP: %s", err)
@@ -72,6 +77,8 @@ func (s *stepTypeBootCommand) Run(state map[string]interface{}) multistep.StepAc
 		ui.Error(err.Error())
 		return multistep.ActionHalt
 	}
+
+	log.Printf("Host IP for the VMware machine: %s", hostIp)
 
 	tplData := &bootCommandTemplateData{
 		hostIp,
@@ -81,11 +88,15 @@ func (s *stepTypeBootCommand) Run(state map[string]interface{}) multistep.StepAc
 
 	ui.Say("Typing the boot command over VNC...")
 	for _, command := range config.BootCommand {
-		var buf bytes.Buffer
-		t := template.Must(template.New("boot").Parse(command))
-		t.Execute(&buf, tplData)
+		command, err := config.tpl.Process(command, tplData)
+		if err != nil {
+			err := fmt.Errorf("Error preparing boot command: %s", err)
+			state["error"] = err
+			ui.Error(err.Error())
+			return multistep.ActionHalt
+		}
 
-		vncSendString(c, buf.String())
+		vncSendString(c, command)
 	}
 
 	return multistep.ActionContinue

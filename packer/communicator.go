@@ -72,6 +72,14 @@ func (r *RemoteCmd) StartWithUi(c Communicator, ui Ui) error {
 	defer stdout_w.Close()
 	defer stderr_w.Close()
 
+	// Retain the original stdout/stderr that we can replace back in.
+	originalStdout := r.Stdout
+	originalStderr := r.Stderr
+	defer func() {
+		r.Stdout = originalStdout
+		r.Stderr = originalStderr
+	}()
+
 	// Set the writers for the output so that we get it streamed to us
 	if r.Stdout == nil {
 		r.Stdout = stdout_w
@@ -108,9 +116,9 @@ OutputLoop:
 	for {
 		select {
 		case output := <-stderrCh:
-			ui.Message(strings.TrimSpace(output))
+			ui.Message(r.cleanOutputLine(output))
 		case output := <-stdoutCh:
-			ui.Message(strings.TrimSpace(output))
+			ui.Message(r.cleanOutputLine(output))
 		case <-exitCh:
 			break OutputLoop
 		}
@@ -155,4 +163,20 @@ func (r *RemoteCmd) Wait() {
 	r.l.Unlock()
 
 	<-r.exitCh
+}
+
+// cleanOutputLine cleans up a line so that '\r' don't muck up the
+// UI output when we're reading from a remote command.
+func (r *RemoteCmd) cleanOutputLine(line string) string {
+	// Trim surrounding whitespace
+	line = strings.TrimSpace(line)
+
+	// Trim up to the first carriage return, since that text would be
+	// lost anyways.
+	idx := strings.LastIndex(line, "\r")
+	if idx > -1 {
+		line = line[idx+1:]
+	}
+
+	return line
 }

@@ -41,8 +41,8 @@ Required:
 
 * `ami_name` (string) - The name of the resulting AMI that will appear
   when managing AMIs in the AWS console or via APIs. This must be unique.
-  To help make this unique, certain template parameters are available for
-  this value, which are documented below.
+  To help make this unique, use a function like `timestamp` (see
+  [configuration templates](/docs/templates/configuration-templates.html) for more info)
 
 * `instance_type` (string) - The EC2 instance type to use while building
   the AMI, such as "m1.small".
@@ -73,12 +73,27 @@ Required:
 
 Optional:
 
+* `ami_description` (string) - The description to set for the resulting
+  AMI(s). By default this description is empty.
+
+* `ami_groups` (array of string) - A list of groups that have access
+  to launch the resulting AMI(s). By default no groups have permission
+  to launch the AMI.
+
+* `ami_product_codes` (array of string) - A list of product codes to
+  associate with the AMI. By default no product codes are associated with
+  the AMI.
+
+* `ami_users` (array of string) - A list of account IDs that have access
+  to launch the resulting AMI(s). By default no additional users other than the user
+  creating the AMI has permissions to launch it.
+
 * `bundle_destination` (string) - The directory on the running instance
   where the bundled AMI will be saved prior to uploading. By default this is
   "/tmp". This directory must exist and be writable.
 
 * `bundle_prefix` (string) - The prefix for files created from bundling
-  the root volume. By default this is "image-{{.Createtime}}". The `CreateTime`
+  the root volume. By default this is "image-{{timestamp}}". The `timestamp`
   variable should be used to make sure this is unique, otherwise it can
   collide with other created AMIs by Packer in your account.
 
@@ -88,6 +103,10 @@ Optional:
 
 * `bundle_vol_command` (string) - The command to use to bundle the volume.
   See the "custom bundle commands" section below for more information.
+
+* `iam_instance_profile` (string) - The name of an
+  [IAM instance profile](http://docs.aws.amazon.com/IAM/latest/UserGuide/instance-profiles.html)
+  to launch the EC2 instance with.
 
 * `security_group_id` (string) - The ID (_not_ the name) of the security
   group to assign to the instance. By default this is not set and Packer
@@ -104,6 +123,16 @@ Optional:
 
 * `subnet_id` (string) - If using VPC, the ID of the subnet, such as
   "subnet-12345def", where Packer will launch the EC2 instance.
+
+* `tags` (object of key/value strings) - Tags applied to the AMI.
+
+* `user_data` (string) - User data to apply when launching the instance.
+  Note that you need to be careful about escaping characters due to the
+  templates being JSON. It is often more convenient to use `user_data_file`,
+  instead.
+
+* `user_data_file` (string) - Path to a file that will be used for the
+  user data when launching the instance.
 
 * `vpc_id` (string) - If launching into a VPC subnet, Packer needs the
   VPC ID in order to create a temporary security group within the VPC.
@@ -134,7 +163,7 @@ Here is a basic example. It is completely valid except for the access keys:
   "x509_key_path": "x509.key",
   "x509_upload_path": "/tmp",
 
-  "ami_name": "packer-quick-start {{.CreateTime}}"
+  "ami_name": "packer-quick-start {{timestamp}}"
 }
 </pre>
 
@@ -144,18 +173,6 @@ access key from environmental variables. See the configuration reference in
 the section above for more information on what environmental variables Packer
 will look for.
 </div>
-
-## AMI Name Variables
-
-The AMI name specified by the `ami_name` configuration variable is actually
-treated as a [configuration template](/docs/templates/configuration-templates.html).
-Packer provides a set of variables that it will replace
-within the AMI name. This helps ensure the AMI name is unique, as AWS requires.
-
-The available variables are shown below:
-
-* `CreateTime` - This will be replaced with the Unix timestamp of when
-  the AMI was built.
 
 ## Custom Bundle Commands
 
@@ -195,6 +212,14 @@ sudo -n ec2-bundle-vol \
 
 The available template variables should be self-explanatory based on the
 parameters they're used to satisfy the `ec2-bundle-vol` command.
+
+<div class="alert alert-block">
+  <strong>Warning!</strong> Some versions of ec2-bundle-vol silently
+ignore all .pem and .gpg files during the bundling of the AMI, which can
+cause problems on some systems, such as Ubuntu. You may want to
+customize the bundle volume command to include those files (see the
+<code>--no-filter</code> option of ec2-bundle-vol).
+</div>
 
 ### Bundle Upload Command
 

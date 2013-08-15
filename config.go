@@ -20,6 +20,7 @@ const defaultConfig = `
 
 	"builders": {
 		"amazon-ebs": "packer-builder-amazon-ebs",
+		"amazon-chroot": "packer-builder-amazon-chroot",
 		"amazon-instance": "packer-builder-amazon-instance",
 		"digitalocean": "packer-builder-digitalocean",
 		"virtualbox": "packer-builder-virtualbox",
@@ -29,6 +30,7 @@ const defaultConfig = `
 	"commands": {
 		"build": "packer-command-build",
 		"fix": "packer-command-fix",
+		"inspect": "packer-command-inspect",
 		"validate": "packer-command-validate"
 	},
 
@@ -38,7 +40,8 @@ const defaultConfig = `
 
 	"provisioners": {
 		"file": "packer-provisioner-file",
-		"shell": "packer-provisioner-shell"
+		"shell": "packer-provisioner-shell",
+		"salt-masterless": "packer-provisioner-salt-masterless"
 	}
 }
 `

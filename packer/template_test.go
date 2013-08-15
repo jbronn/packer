@@ -2,10 +2,80 @@ package packer
 
 import (
 	"cgl.tideland.biz/asserts"
+	"io/ioutil"
+	"os"
 	"reflect"
 	"sort"
 	"testing"
 )
+
+func testComponentFinder() *ComponentFinder {
+	builderFactory := func(n string) (Builder, error) { return testBuilder(), nil }
+	ppFactory := func(n string) (PostProcessor, error) { return new(TestPostProcessor), nil }
+	provFactory := func(n string) (Provisioner, error) { return new(TestProvisioner), nil }
+	return &ComponentFinder{
+		Builder:       builderFactory,
+		PostProcessor: ppFactory,
+		Provisioner:   provFactory,
+	}
+}
+
+func TestParseTemplateFile_basic(t *testing.T) {
+	data := `
+	{
+		"builders": [{"type": "something"}]
+	}
+	`
+
+	tf, err := ioutil.TempFile("", "packer")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	tf.Write([]byte(data))
+	tf.Close()
+
+	result, err := ParseTemplateFile(tf.Name())
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	if len(result.Builders) != 1 {
+		t.Fatalf("bad: %#v", result.Builders)
+	}
+}
+
+func TestParseTemplateFile_stdin(t *testing.T) {
+	data := `
+	{
+		"builders": [{"type": "something"}]
+	}
+	`
+
+	tf, err := ioutil.TempFile("", "packer")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	defer tf.Close()
+	tf.Write([]byte(data))
+
+	// Sync and seek to the beginning so that we can re-read the contents
+	tf.Sync()
+	tf.Seek(0, 0)
+
+	// Set stdin to something we control
+	oldStdin := os.Stdin
+	defer func() { os.Stdin = oldStdin }()
+	os.Stdin = tf
+
+	result, err := ParseTemplateFile("-")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	if len(result.Builders) != 1 {
+		t.Fatalf("bad: %#v", result.Builders)
+	}
+}
 
 func TestParseTemplate_Basic(t *testing.T) {
 	assert := asserts.NewTestingAsserts(t, true)
@@ -129,8 +199,8 @@ func TestParseTemplate_BuilderWithName(t *testing.T) {
 	assert.True(ok, "should have bob builder")
 	assert.Equal(builder.Type, "amazon-ebs", "builder should be amazon-ebs")
 
-	rawConfig := builder.rawConfig
-	if rawConfig == nil {
+	RawConfig := builder.RawConfig
+	if RawConfig == nil {
 		t.Fatal("missing builder raw config")
 	}
 
@@ -138,8 +208,8 @@ func TestParseTemplate_BuilderWithName(t *testing.T) {
 		"type": "amazon-ebs",
 	}
 
-	if !reflect.DeepEqual(rawConfig, expected) {
-		t.Fatalf("bad raw: %#v", rawConfig)
+	if !reflect.DeepEqual(RawConfig, expected) {
+		t.Fatalf("bad raw: %#v", RawConfig)
 	}
 }
 
@@ -297,7 +367,29 @@ func TestParseTemplate_Provisioners(t *testing.T) {
 	assert.NotNil(result, "template should not be nil")
 	assert.Length(result.Provisioners, 1, "should have one provisioner")
 	assert.Equal(result.Provisioners[0].Type, "shell", "provisioner should be shell")
-	assert.NotNil(result.Provisioners[0].rawConfig, "should have raw config")
+	assert.NotNil(result.Provisioners[0].RawConfig, "should have raw config")
+}
+
+func TestParseTemplate_Variables(t *testing.T) {
+	data := `
+	{
+		"variables": {
+			"foo": "bar",
+			"bar": ""
+		},
+
+		"builders": [{"type": "something"}]
+	}
+	`
+
+	result, err := ParseTemplate([]byte(data))
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	if result.Variables == nil || len(result.Variables) != 2 {
+		t.Fatalf("bad vars: %#v", result.Variables)
+	}
 }
 
 func TestTemplate_BuildNames(t *testing.T) {
@@ -573,8 +665,8 @@ func TestTemplate_Build_ProvisionerOverride(t *testing.T) {
 		t.Fatalf("err: %s", err)
 	}
 
-	rawConfig := template.Provisioners[0].rawConfig
-	if rawConfig == nil {
+	RawConfig := template.Provisioners[0].RawConfig
+	if RawConfig == nil {
 		t.Fatal("missing provisioner raw config")
 	}
 
@@ -582,8 +674,8 @@ func TestTemplate_Build_ProvisionerOverride(t *testing.T) {
 		"type": "test-prov",
 	}
 
-	if !reflect.DeepEqual(rawConfig, expected) {
-		t.Fatalf("bad raw: %#v", rawConfig)
+	if !reflect.DeepEqual(RawConfig, expected) {
+		t.Fatalf("bad raw: %#v", RawConfig)
 	}
 
 	builder := testBuilder()
@@ -612,4 +704,40 @@ func TestTemplate_Build_ProvisionerOverride(t *testing.T) {
 	assert.True(ok, "should be a core build")
 	assert.Equal(len(coreBuild.provisioners), 1, "should have one provisioner")
 	assert.Equal(len(coreBuild.provisioners[0].config), 2, "should have two configs on the provisioner")
+}
+
+func TestTemplateBuild_variables(t *testing.T) {
+	data := `
+	{
+		"variables": {
+			"foo": "bar"
+		},
+
+		"builders": [
+			{
+				"name": "test1",
+				"type": "test-builder"
+			}
+		]
+	}
+	`
+
+	template, err := ParseTemplate([]byte(data))
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	build, err := template.Build("test1", testComponentFinder())
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	coreBuild, ok := build.(*coreBuild)
+	if !ok {
+		t.Fatalf("couldn't convert!")
+	}
+
+	if len(coreBuild.variables) != 1 {
+		t.Fatalf("bad vars: %#v", coreBuild.variables)
+	}
 }

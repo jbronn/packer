@@ -4,22 +4,22 @@ package shell
 
 import (
 	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
-	"github.com/mitchellh/mapstructure"
+	"github.com/mitchellh/packer/common"
 	"github.com/mitchellh/packer/packer"
 	"io/ioutil"
 	"log"
 	"os"
-	"sort"
 	"strings"
-	"text/template"
+	"time"
 )
 
 const DefaultRemotePath = "/tmp/script.sh"
 
 type config struct {
+	common.PackerConfig `mapstructure:",squash"`
+
 	// An inline script to execute. Multiple strings are all executed
 	// in the context of a single shell.
 	Inline []string
@@ -46,9 +46,13 @@ type config struct {
 	// can be used to inject the environment_vars into the environment.
 	ExecuteCommand string `mapstructure:"execute_command"`
 
-	// Packer configurations, these come from Packer itself
-	PackerBuildName   string `mapstructure:"packer_build_name"`
-	PackerBuilderType string `mapstructure:"packer_builder_type"`
+	// The timeout for retrying to start the process. Until this timeout
+	// is reached, if the provisioner can't start a process, it retries.
+	// This can be set high to allow for reboots.
+	RawStartRetryTimeout string `mapstructure:"start_retry_timeout"`
+
+	startRetryTimeout time.Duration
+	tpl               *common.Template
 }
 
 type Provisioner struct {
@@ -61,37 +65,19 @@ type ExecuteCommandTemplate struct {
 }
 
 func (p *Provisioner) Prepare(raws ...interface{}) error {
-	var md mapstructure.Metadata
-	decoderConfig := &mapstructure.DecoderConfig{
-		Metadata: &md,
-		Result:   &p.config,
-	}
-
-	decoder, err := mapstructure.NewDecoder(decoderConfig)
+	md, err := common.DecodeConfig(&p.config, raws...)
 	if err != nil {
 		return err
 	}
 
-	for _, raw := range raws {
-		err := decoder.Decode(raw)
-		if err != nil {
-			return err
-		}
+	p.config.tpl, err = common.NewTemplate()
+	if err != nil {
+		return err
 	}
+	p.config.tpl.UserVars = p.config.PackerUserVars
 
 	// Accumulate any errors
-	errs := make([]error, 0)
-
-	// Unused keys are errors
-	if len(md.Unused) > 0 {
-		sort.Strings(md.Unused)
-		for _, unused := range md.Unused {
-			if unused != "type" && !strings.HasPrefix(unused, "packer_") {
-				errs = append(
-					errs, fmt.Errorf("Unknown configuration key: %s", unused))
-			}
-		}
-	}
+	errs := common.CheckUnusedConfig(md)
 
 	if p.config.ExecuteCommand == "" {
 		p.config.ExecuteCommand = "chmod +x {{.Path}}; {{.Vars}} {{.Path}}"
@@ -103,6 +89,10 @@ func (p *Provisioner) Prepare(raws ...interface{}) error {
 
 	if p.config.InlineShebang == "" {
 		p.config.InlineShebang = "/bin/sh"
+	}
+
+	if p.config.RawStartRetryTimeout == "" {
+		p.config.RawStartRetryTimeout = "5m"
 	}
 
 	if p.config.RemotePath == "" {
@@ -118,22 +108,59 @@ func (p *Provisioner) Prepare(raws ...interface{}) error {
 	}
 
 	if p.config.Script != "" && len(p.config.Scripts) > 0 {
-		errs = append(errs, errors.New("Only one of script or scripts can be specified."))
+		errs = packer.MultiErrorAppend(errs,
+			errors.New("Only one of script or scripts can be specified."))
 	}
 
 	if p.config.Script != "" {
 		p.config.Scripts = []string{p.config.Script}
 	}
 
+	templates := map[string]*string{
+		"inline_shebang":      &p.config.InlineShebang,
+		"script":              &p.config.Script,
+		"start_retry_timeout": &p.config.RawStartRetryTimeout,
+		"remote_path":         &p.config.RemotePath,
+	}
+
+	for n, ptr := range templates {
+		var err error
+		*ptr, err = p.config.tpl.Process(*ptr, nil)
+		if err != nil {
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("Error processing %s: %s", n, err))
+		}
+	}
+
+	sliceTemplates := map[string][]string{
+		"inline":           p.config.Inline,
+		"scripts":          p.config.Scripts,
+		"environment_vars": p.config.Vars,
+	}
+
+	for n, slice := range sliceTemplates {
+		for i, elem := range slice {
+			var err error
+			slice[i], err = p.config.tpl.Process(elem, nil)
+			if err != nil {
+				errs = packer.MultiErrorAppend(
+					errs, fmt.Errorf("Error processing %s[%d]: %s", n, i, err))
+			}
+		}
+	}
+
 	if len(p.config.Scripts) == 0 && p.config.Inline == nil {
-		errs = append(errs, errors.New("Either a script file or inline script must be specified."))
+		errs = packer.MultiErrorAppend(errs,
+			errors.New("Either a script file or inline script must be specified."))
 	} else if len(p.config.Scripts) > 0 && p.config.Inline != nil {
-		errs = append(errs, errors.New("Only a script file or an inline script can be specified, not both."))
+		errs = packer.MultiErrorAppend(errs,
+			errors.New("Only a script file or an inline script can be specified, not both."))
 	}
 
 	for _, path := range p.config.Scripts {
 		if _, err := os.Stat(path); err != nil {
-			errs = append(errs, fmt.Errorf("Bad script '%s': %s", path, err))
+			errs = packer.MultiErrorAppend(errs,
+				fmt.Errorf("Bad script '%s': %s", path, err))
 		}
 	}
 
@@ -141,14 +168,21 @@ func (p *Provisioner) Prepare(raws ...interface{}) error {
 	for _, kv := range p.config.Vars {
 		vs := strings.Split(kv, "=")
 		if len(vs) != 2 || vs[0] == "" {
-			errs = append(
-				errs,
+			errs = packer.MultiErrorAppend(errs,
 				fmt.Errorf("Environment variable not in format 'key=value': %s", kv))
 		}
 	}
 
-	if len(errs) > 0 {
-		return &packer.MultiError{errs}
+	if p.config.RawStartRetryTimeout != "" {
+		p.config.startRetryTimeout, err = time.ParseDuration(p.config.RawStartRetryTimeout)
+		if err != nil {
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("Failed parsing start_retry_timeout: %s", err))
+		}
+	}
+
+	if errs != nil && len(errs.Errors) > 0 {
+		return errs
 	}
 
 	return nil
@@ -215,14 +249,35 @@ func (p *Provisioner) Provision(ui packer.Ui, comm packer.Communicator) error {
 		flattendVars := strings.Join(envVars, " ")
 
 		// Compile the command
-		var command bytes.Buffer
-		t := template.Must(template.New("command").Parse(p.config.ExecuteCommand))
-		t.Execute(&command, &ExecuteCommandTemplate{flattendVars, p.config.RemotePath})
+		command, err := p.config.tpl.Process(p.config.ExecuteCommand, &ExecuteCommandTemplate{
+			Vars: flattendVars,
+			Path: p.config.RemotePath,
+		})
+		if err != nil {
+			return fmt.Errorf("Error processing command: %s", err)
+		}
 
-		cmd := &packer.RemoteCmd{Command: command.String()}
+		cmd := &packer.RemoteCmd{Command: command}
+		startTimeout := time.After(p.config.startRetryTimeout)
 		log.Printf("Executing command: %s", cmd.Command)
-		if err := cmd.StartWithUi(comm, ui); err != nil {
-			return fmt.Errorf("Failed executing command: %s", err)
+		for {
+			if err := cmd.StartWithUi(comm, ui); err == nil {
+				break
+			}
+
+			// Create an error and log it
+			err = fmt.Errorf("Error executing command: %s", err)
+			log.Printf(err.Error())
+
+			// Check if we timed out, otherwise we retry. It is safe to
+			// retry since the only error case above is if the command
+			// failed to START.
+			select {
+			case <-startTimeout:
+				return err
+			default:
+				time.Sleep(2 * time.Second)
+			}
 		}
 
 		if cmd.ExitStatus != 0 {

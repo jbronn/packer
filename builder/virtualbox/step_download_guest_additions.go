@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/mitchellh/multistep"
-	"github.com/mitchellh/packer/builder/common"
+	"github.com/mitchellh/packer/common"
 	"github.com/mitchellh/packer/packer"
 	"io"
 	"io/ioutil"
@@ -19,6 +19,10 @@ import (
 var additionsVersionMap = map[string]string{
 	"4.2.1":  "4.2.0",
 	"4.1.23": "4.1.22",
+}
+
+type guestAdditionsUrlTemplate struct {
+	Version string
 }
 
 // This step uploads a file containing the VirtualBox version, which
@@ -69,11 +73,31 @@ func (s *stepDownloadGuestAdditions) Run(state map[string]interface{}) multistep
 
 	// Use the provided source (URL or file path) or generate it
 	url := config.GuestAdditionsURL
-	if url == "" {
+	if url != "" {
+		tplData := &guestAdditionsUrlTemplate{
+			Version: version,
+		}
+
+		url, err = config.tpl.Process(url, tplData)
+		if err != nil {
+			err := fmt.Errorf("Error preparing guest additions url: %s", err)
+			state["error"] = err
+			ui.Error(err.Error())
+			return multistep.ActionHalt
+		}
+	} else {
 		url = fmt.Sprintf(
 			"http://download.virtualbox.org/virtualbox/%s/%s",
 			version,
 			additionsName)
+	}
+
+	url, err = common.DownloadableURL(url)
+	if err != nil {
+		err := fmt.Errorf("Error preparing guest additions url: %s", err)
+		state["error"] = err
+		ui.Error(err.Error())
+		return multistep.ActionHalt
 	}
 
 	log.Printf("Guest additions URL: %s", url)

@@ -50,3 +50,22 @@ environmental variable was not setup properly. Please go back and ensure
 that your PATH variable contains the directory which has Packer installed.
 
 Otherwise, Packer is installed and you're ready to go!
+
+## Alternative Installation Methods
+
+Installation from binary packages is currently the only officially supported
+installation method. The binary packages are guaranteed to be the latest
+available version and match the proper checksums. However, in addition to
+the official binaries, there are other unofficial 3rd party methods of
+installation managed by the Packer community:
+
+### Homebrew
+
+If you're using OS X and [Homebrew](http://brew.sh), you can install Packer by
+adding the `binary` tap. Remember that this is updated by a 3rd party, so
+it may not be the latest available version.
+
+```
+$ brew tap homebrew/binary
+$ brew install packer
+```
