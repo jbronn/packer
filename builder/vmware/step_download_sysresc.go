@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/mitchellh/multistep"
-	"github.com/mitchellh/packer/builder/common"
+	"github.com/mitchellh/packer/common"
 	"github.com/mitchellh/packer/packer"
 	"log"
 	"time"
@@ -76,7 +76,10 @@ DownloadWaitLoop:
 
 			break DownloadWaitLoop
 		case <-progressTicker.C:
-			ui.Say(fmt.Sprintf("Download progress: %d%%", download.PercentProgress()))
+			progress := download.PercentProgress()
+			if progress >= 0 {
+				ui.Message(fmt.Sprintf("Download progress: %d%%", progress))
+			}
 		case <-time.After(1 * time.Second):
 			if _, ok := state[multistep.StateCancelled]; ok {
 				ui.Say("Interrupt received. Cancelling download...")

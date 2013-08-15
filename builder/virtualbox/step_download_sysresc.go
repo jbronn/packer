@@ -4,17 +4,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/mitchellh/multistep"
-	"github.com/mitchellh/packer/builder/common"
+	"github.com/mitchellh/packer/common"
 	"github.com/mitchellh/packer/packer"
-	"io"
-	"io/ioutil"
 	"log"
-	"os"
-	"path/filepath"
 	"time"
 )
 
-// This step downloads the ISO specified.
+// This step downloads the System Rescue CD specified.
 //
 // Uses:
 //   cache packer.Cache
@@ -23,11 +19,9 @@ import (
 //
 // Produces:
 //   sysresc_path string
-type stepDownloadSysResc struct {
-	isoCopyDir string
-}
+type stepDownloadSysResc struct{}
 
-func (s *stepDownloadSysResc) Run(state map[string]interface{}) multistep.StepAction {
+func (s stepDownloadSysResc) Run(state map[string]interface{}) multistep.StepAction {
 	cache := state["cache"].(packer.Cache)
 	config := state["config"].(*config)
 	ui := state["ui"].(packer.Ui)
@@ -80,7 +74,10 @@ DownloadWaitLoop:
 
 			break DownloadWaitLoop
 		case <-progressTicker.C:
-			ui.Message(fmt.Sprintf("Download progress: %d%%", download.PercentProgress()))
+			progress := download.PercentProgress()
+			if progress >= 0 {
+				ui.Message(fmt.Sprintf("Download progress: %d%%", progress))
+			}
 		case <-time.After(1 * time.Second):
 			if _, ok := state[multistep.StateCancelled]; ok {
 				ui.Say("Interrupt received. Cancelling download...")
@@ -89,44 +86,10 @@ DownloadWaitLoop:
 		}
 	}
 
-	// VirtualBox is really dumb and can't figure out that the file is an
-	// ISO unless it has a ".iso" extension. We can't modify the cache
-	// filenames so we just do a copy.
-	tempdir, err := ioutil.TempDir("", "packer")
-	if err != nil {
-		state["error"] = fmt.Errorf("Error copying System Rescue CD: %s", err)
-		return multistep.ActionHalt
-	}
-	s.isoCopyDir = tempdir
-
-	f, err := os.Create(filepath.Join(tempdir, "sysresc.iso"))
-	if err != nil {
-		state["error"] = fmt.Errorf("Error copying System Rescue CD: %s", err)
-		return multistep.ActionHalt
-	}
-	defer f.Close()
-
-	sourceF, err := os.Open(cachePath)
-	if err != nil {
-		state["error"] = fmt.Errorf("Error copying System Rescue CD: %s", err)
-		return multistep.ActionHalt
-	}
-	defer sourceF.Close()
-
-	log.Printf("Copying System Rescue CD to temp location: %s", tempdir)
-	if _, err := io.Copy(f, sourceF); err != nil {
-		state["error"] = fmt.Errorf("Error copying System Rescue CD: %s", err)
-		return multistep.ActionHalt
-	}
-
 	log.Printf("Path to System Rescue CD on disk: %s", cachePath)
-	state["sysresc_path"] = f.Name()
+	state["sysresc_path"] = cachePath
 
 	return multistep.ActionContinue
 }
 
-func (s *stepDownloadSysResc) Cleanup(map[string]interface{}) {
-	if s.isoCopyDir != "" {
-		os.RemoveAll(s.isoCopyDir)
-	}
-}
+func (stepDownloadSysResc) Cleanup(map[string]interface{}) {}
