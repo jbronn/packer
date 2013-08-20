@@ -39,9 +39,27 @@ func (s *stepCreateDisk) Run(state map[string]interface{}) multistep.StepAction 
 		return multistep.ActionHalt
 	}
 
-	// Add the IDE controller so we can later attach the disk
+	// Add the IDE controller so we can attach CD/DVD drives.
 	controllerName := "IDE Controller"
 	err = driver.VBoxManage("storagectl", vmName, "--name", controllerName, "--add", "ide")
+	if err != nil {
+		err := fmt.Errorf("Error creating disk controller: %s", err)
+		state["error"] = err
+		ui.Error(err.Error())
+		return multistep.ActionHalt
+	}
+
+	// Add the SATA controller so we can later attach the disk.
+	controllerName = "SATA Controller"
+	sataPortCount := "4"
+	command = []string{
+		"storagectl", vmName,
+		"--name", controllerName,
+		"--add", "sata",
+		"--sataportcount", sataPortCount,
+		"--controller", "IntelAhci",
+	}
+	err = driver.VBoxManage(command...)
 	if err != nil {
 		err := fmt.Errorf("Error creating disk controller: %s", err)
 		state["error"] = err
