@@ -58,6 +58,10 @@ func TestBuilderPrepare_Defaults(t *testing.T) {
 	if b.config.VMName != "packer-foo" {
 		t.Errorf("bad vm name: %s", b.config.VMName)
 	}
+
+	if b.config.Format != "ovf" {
+		t.Errorf("bad format: %s", b.config.Format)
+	}
 }
 
 func TestBuilderPrepare_BootWait(t *testing.T) {
@@ -84,6 +88,7 @@ func TestBuilderPrepare_BootWait(t *testing.T) {
 
 	// Test with a good one
 	config["boot_wait"] = "5s"
+	b = Builder{}
 	err = b.Prepare(config)
 	if err != nil {
 		t.Fatalf("should not have error: %s", err)
@@ -210,6 +215,7 @@ func TestBuilderPrepare_GuestAdditionsURL(t *testing.T) {
 	}
 
 	config["guest_additions_url"] = "http://www.packer.io"
+	b = Builder{}
 	err = b.Prepare(config)
 	if err != nil {
 		t.Errorf("should not have error: %s", err)
@@ -230,6 +236,7 @@ func TestBuilderPrepare_HTTPPort(t *testing.T) {
 
 	// Bad
 	config["http_port_min"] = -500
+	b = Builder{}
 	err = b.Prepare(config)
 	if err == nil {
 		t.Fatal("should have error")
@@ -238,6 +245,35 @@ func TestBuilderPrepare_HTTPPort(t *testing.T) {
 	// Good
 	config["http_port_min"] = 500
 	config["http_port_max"] = 1000
+	b = Builder{}
+	err = b.Prepare(config)
+	if err != nil {
+		t.Fatalf("should not have error: %s", err)
+	}
+}
+
+func TestBuilderPrepare_Format(t *testing.T) {
+	var b Builder
+	config := testConfig()
+
+	// Bad
+	config["format"] = "illegal value"
+	err := b.Prepare(config)
+	if err == nil {
+		t.Fatal("should have error")
+	}
+
+	// Good
+	config["format"] = "ova"
+	b = Builder{}
+	err = b.Prepare(config)
+	if err != nil {
+		t.Fatalf("should not have error: %s", err)
+	}
+
+	// Good
+	config["format"] = "ovf"
+	b = Builder{}
 	err = b.Prepare(config)
 	if err != nil {
 		t.Fatalf("should not have error: %s", err)
@@ -269,6 +305,7 @@ func TestBuilderPrepare_ISOChecksum(t *testing.T) {
 
 	// Test good
 	config["iso_checksum"] = "FOo"
+	b = Builder{}
 	err = b.Prepare(config)
 	if err != nil {
 		t.Fatalf("should not have error: %s", err)
@@ -292,6 +329,7 @@ func TestBuilderPrepare_ISOChecksumType(t *testing.T) {
 
 	// Test good
 	config["iso_checksum_type"] = "mD5"
+	b = Builder{}
 	err = b.Prepare(config)
 	if err != nil {
 		t.Fatalf("should not have error: %s", err)
@@ -303,6 +341,7 @@ func TestBuilderPrepare_ISOChecksumType(t *testing.T) {
 
 	// Test unknown
 	config["iso_checksum_type"] = "fake"
+	b = Builder{}
 	err = b.Prepare(config)
 	if err == nil {
 		t.Fatal("should have error")
@@ -312,17 +351,58 @@ func TestBuilderPrepare_ISOChecksumType(t *testing.T) {
 func TestBuilderPrepare_ISOUrl(t *testing.T) {
 	var b Builder
 	config := testConfig()
+	delete(config, "iso_url")
+	delete(config, "iso_urls")
 
+	// Test both epty
 	config["iso_url"] = ""
+	b = Builder{}
 	err := b.Prepare(config)
 	if err == nil {
 		t.Fatal("should have error")
 	}
 
+	// Test iso_url set
 	config["iso_url"] = "http://www.packer.io"
+	b = Builder{}
 	err = b.Prepare(config)
 	if err != nil {
 		t.Errorf("should not have error: %s", err)
+	}
+
+	expected := []string{"http://www.packer.io"}
+	if !reflect.DeepEqual(b.config.ISOUrls, expected) {
+		t.Fatalf("bad: %#v", b.config.ISOUrls)
+	}
+
+	// Test both set
+	config["iso_url"] = "http://www.packer.io"
+	config["iso_urls"] = []string{"http://www.packer.io"}
+	b = Builder{}
+	err = b.Prepare(config)
+	if err == nil {
+		t.Fatal("should have error")
+	}
+
+	// Test just iso_urls set
+	delete(config, "iso_url")
+	config["iso_urls"] = []string{
+		"http://www.packer.io",
+		"http://www.hashicorp.com",
+	}
+
+	b = Builder{}
+	err = b.Prepare(config)
+	if err != nil {
+		t.Errorf("should not have error: %s", err)
+	}
+
+	expected = []string{
+		"http://www.packer.io",
+		"http://www.hashicorp.com",
+	}
+	if !reflect.DeepEqual(b.config.ISOUrls, expected) {
+		t.Fatalf("bad: %#v", b.config.ISOUrls)
 	}
 }
 
@@ -338,6 +418,7 @@ func TestBuilderPrepare_OutputDir(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	config["output_directory"] = dir
+	b = Builder{}
 	err = b.Prepare(config)
 	if err == nil {
 		t.Fatal("should have error")
@@ -345,6 +426,7 @@ func TestBuilderPrepare_OutputDir(t *testing.T) {
 
 	// Test with a good one
 	config["output_directory"] = "i-hope-i-dont-exist"
+	b = Builder{}
 	err = b.Prepare(config)
 	if err != nil {
 		t.Fatalf("should not have error: %s", err)
@@ -364,6 +446,7 @@ func TestBuilderPrepare_ShutdownTimeout(t *testing.T) {
 
 	// Test with a good one
 	config["shutdown_timeout"] = "5s"
+	b = Builder{}
 	err = b.Prepare(config)
 	if err != nil {
 		t.Fatalf("should not have error: %s", err)
@@ -377,6 +460,7 @@ func TestBuilderPrepare_SSHHostPort(t *testing.T) {
 	// Bad
 	config["ssh_host_port_min"] = 1000
 	config["ssh_host_port_max"] = 500
+	b = Builder{}
 	err := b.Prepare(config)
 	if err == nil {
 		t.Fatal("should have error")
@@ -384,6 +468,7 @@ func TestBuilderPrepare_SSHHostPort(t *testing.T) {
 
 	// Bad
 	config["ssh_host_port_min"] = -500
+	b = Builder{}
 	err = b.Prepare(config)
 	if err == nil {
 		t.Fatal("should have error")
@@ -392,6 +477,7 @@ func TestBuilderPrepare_SSHHostPort(t *testing.T) {
 	// Good
 	config["ssh_host_port_min"] = 500
 	config["ssh_host_port_max"] = 1000
+	b = Builder{}
 	err = b.Prepare(config)
 	if err != nil {
 		t.Fatalf("should not have error: %s", err)
@@ -403,12 +489,14 @@ func TestBuilderPrepare_SSHUser(t *testing.T) {
 	config := testConfig()
 
 	config["ssh_username"] = ""
+	b = Builder{}
 	err := b.Prepare(config)
 	if err == nil {
 		t.Fatal("should have error")
 	}
 
 	config["ssh_username"] = "exists"
+	b = Builder{}
 	err = b.Prepare(config)
 	if err != nil {
 		t.Fatalf("should not have error: %s", err)
@@ -432,6 +520,7 @@ func TestBuilderPrepare_SSHWaitTimeout(t *testing.T) {
 
 	// Test with a bad value
 	config["ssh_wait_timeout"] = "this is not good"
+	b = Builder{}
 	err = b.Prepare(config)
 	if err == nil {
 		t.Fatal("should have error")
@@ -439,6 +528,7 @@ func TestBuilderPrepare_SSHWaitTimeout(t *testing.T) {
 
 	// Test with a good one
 	config["ssh_wait_timeout"] = "5s"
+	b = Builder{}
 	err = b.Prepare(config)
 	if err != nil {
 		t.Fatalf("should not have error: %s", err)

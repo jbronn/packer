@@ -27,6 +27,7 @@ type config struct {
 	BootCommand          []string   `mapstructure:"boot_command"`
 	DiskSize             uint       `mapstructure:"disk_size"`
 	FloppyFiles          []string   `mapstructure:"floppy_files"`
+	Format               string     `mapstructure:"format"`
 	GuestAdditionsPath   string     `mapstructure:"guest_additions_path"`
 	GuestAdditionsURL    string     `mapstructure:"guest_additions_url"`
 	GuestAdditionsSHA256 string     `mapstructure:"guest_additions_sha256"`
@@ -37,7 +38,7 @@ type config struct {
 	HTTPPortMax          uint       `mapstructure:"http_port_max"`
 	ISOChecksum          string     `mapstructure:"iso_checksum"`
 	ISOChecksumType      string     `mapstructure:"iso_checksum_type"`
-	ISOUrl               string     `mapstructure:"iso_url"`
+	ISOUrls              []string   `mapstructure:"iso_urls"`
 	OutputDir            string     `mapstructure:"output_directory"`
 	ShutdownCommand      string     `mapstructure:"shutdown_command"`
 	SSHHostPortMin       uint       `mapstructure:"ssh_host_port_min"`
@@ -50,6 +51,7 @@ type config struct {
 	VMName               string     `mapstructure:"vm_name"`
 
 	RawBootWait        string `mapstructure:"boot_wait"`
+	RawSingleISOUrl    string `mapstructure:"iso_url"`
 	RawShutdownTimeout string `mapstructure:"shutdown_timeout"`
 	RawSSHWaitTimeout  string `mapstructure:"ssh_wait_timeout"`
 
@@ -61,7 +63,7 @@ type config struct {
 	bootWait        time.Duration ``
 	shutdownTimeout time.Duration ``
 	sshWaitTimeout  time.Duration ``
-	tpl             *common.Template
+	tpl             *packer.ConfigTemplate
 }
 
 func (b *Builder) Prepare(raws ...interface{}) error {
@@ -70,7 +72,7 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		return err
 	}
 
-	b.config.tpl, err = common.NewTemplate()
+	b.config.tpl, err = packer.NewConfigTemplate()
 	if err != nil {
 		return err
 	}
@@ -135,6 +137,10 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		b.config.VMName = fmt.Sprintf("packer-%s", b.config.PackerBuildName)
 	}
 
+	if b.config.Format == "" {
+		b.config.Format = "ovf"
+	}
+
 	// Errors
 	templates := map[string]*string{
 		"guest_additions_sha256":  &b.config.GuestAdditionsSHA256,
@@ -142,13 +148,14 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		"http_directory":          &b.config.HTTPDir,
 		"iso_checksum":            &b.config.ISOChecksum,
 		"iso_checksum_type":       &b.config.ISOChecksumType,
-		"iso_url":                 &b.config.ISOUrl,
+		"iso_url":                 &b.config.RawSingleISOUrl,
 		"output_directory":        &b.config.OutputDir,
 		"shutdown_command":        &b.config.ShutdownCommand,
 		"ssh_password":            &b.config.SSHPassword,
 		"ssh_username":            &b.config.SSHUser,
 		"virtualbox_version_file": &b.config.VBoxVersionFile,
 		"vm_name":                 &b.config.VMName,
+		"format":                  &b.config.Format,
 		"boot_wait":               &b.config.RawBootWait,
 		"shutdown_timeout":        &b.config.RawShutdownTimeout,
 		"ssh_wait_timeout":        &b.config.RawSSHWaitTimeout,
@@ -160,6 +167,15 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		if err != nil {
 			errs = packer.MultiErrorAppend(
 				errs, fmt.Errorf("Error processing %s: %s", n, err))
+		}
+	}
+
+	for i, url := range b.config.ISOUrls {
+		var err error
+		b.config.ISOUrls[i], err = b.config.tpl.Process(url, nil)
+		if err != nil {
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("Error processing iso_urls[%d]: %s", i, err))
 		}
 	}
 
@@ -192,6 +208,11 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		}
 	}
 
+	if !(b.config.Format == "ovf" || b.config.Format == "ova") {
+		errs = packer.MultiErrorAppend(
+			errs, errors.New("invalid format, only 'ovf' or 'ova' are allowed"))
+	}
+
 	if b.config.HTTPPortMin > b.config.HTTPPortMax {
 		errs = packer.MultiErrorAppend(
 			errs, errors.New("http_port_min must be less than http_port_max"))
@@ -216,14 +237,21 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		}
 	}
 
-	if b.config.ISOUrl == "" {
+	if b.config.RawSingleISOUrl == "" && len(b.config.ISOUrls) == 0 {
 		errs = packer.MultiErrorAppend(
-			errs, errors.New("An iso_url must be specified."))
-	} else {
-		b.config.ISOUrl, err = common.DownloadableURL(b.config.ISOUrl)
+			errs, errors.New("One of iso_url or iso_urls must be specified."))
+	} else if b.config.RawSingleISOUrl != "" && len(b.config.ISOUrls) > 0 {
+		errs = packer.MultiErrorAppend(
+			errs, errors.New("Only one of iso_url or iso_urls may be specified."))
+	} else if b.config.RawSingleISOUrl != "" {
+		b.config.ISOUrls = []string{b.config.RawSingleISOUrl}
+	}
+
+	for i, url := range b.config.ISOUrls {
+		b.config.ISOUrls[i], err = common.DownloadableURL(url)
 		if err != nil {
 			errs = packer.MultiErrorAppend(
-				errs, fmt.Errorf("iso_url: %s", err))
+				errs, fmt.Errorf("Failed to parse iso_url %d: %s", i+1, err))
 		}
 	}
 
@@ -327,8 +355,20 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 
 	steps := []multistep.Step{
 		new(stepDownloadGuestAdditions),
-		new(stepDownloadISO),
-		new(stepDownloadSysResc),
+		&common.StepDownload{
+			Checksum:     b.config.ISOChecksum,
+			ChecksumType: b.config.ISOChecksumType,
+			Description:  "ISO",
+			ResultKey:    "iso_path",
+			Url:          b.config.ISOUrls,
+		},
+		&common.StepDownload{
+			Checksum:     b.config.SysRescChecksum,
+			ChecksumType: b.config.SysRescChecksumType,
+			Description:  "System Rescue CD",
+			ResultKey:    "sysresc_path",
+			Url:          []string{b.config.SysRescURL},
+		},
 		new(stepPrepareOutputDir),
 		&common.StepCreateFloppy{
 			Files: b.config.FloppyFiles,

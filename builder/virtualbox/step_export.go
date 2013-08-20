@@ -61,7 +61,7 @@ func (s *stepExport) Run(state map[string]interface{}) multistep.StepAction {
 	}
 
 	// Export the VM to an OVF
-	outputPath := filepath.Join(config.OutputDir, fmt.Sprintf("%s.ovf", vmName))
+	outputPath := filepath.Join(config.OutputDir, fmt.Sprintf("%s.%s", vmName, config.Format))
 
 	command = []string{
 		"export",

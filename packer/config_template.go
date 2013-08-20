@@ -1,4 +1,4 @@
-package common
+package packer
 
 import (
 	"bytes"
@@ -8,19 +8,19 @@ import (
 	"time"
 )
 
-// Template processes string data as a text/template with some common
+// ConfigTemplate processes string data as a text/template with some common
 // elements and functions available. Plugin creators should process as
 // many fields as possible through this.
-type Template struct {
+type ConfigTemplate struct {
 	UserVars map[string]string
 
 	root *template.Template
 	i    int
 }
 
-// NewTemplate creates a new template processor.
-func NewTemplate() (*Template, error) {
-	result := &Template{
+// NewConfigTemplate creates a new configuration template processor.
+func NewConfigTemplate() (*ConfigTemplate, error) {
+	result := &ConfigTemplate{
 		UserVars: make(map[string]string),
 	}
 
@@ -34,7 +34,7 @@ func NewTemplate() (*Template, error) {
 }
 
 // Process processes a single string, compiling and executing the template.
-func (t *Template) Process(s string, data interface{}) (string, error) {
+func (t *ConfigTemplate) Process(s string, data interface{}) (string, error) {
 	tpl, err := t.root.New(t.nextTemplateName()).Parse(s)
 	if err != nil {
 		return "", err
@@ -49,7 +49,7 @@ func (t *Template) Process(s string, data interface{}) (string, error) {
 }
 
 // Validate the template.
-func (t *Template) Validate(s string) error {
+func (t *ConfigTemplate) Validate(s string) error {
 	root, err := t.root.Clone()
 	if err != nil {
 		return err
@@ -59,7 +59,7 @@ func (t *Template) Validate(s string) error {
 	return err
 }
 
-func (t *Template) nextTemplateName() string {
+func (t *ConfigTemplate) nextTemplateName() string {
 	name := fmt.Sprintf("tpl%d", t.i)
 	t.i++
 	return name
@@ -67,7 +67,7 @@ func (t *Template) nextTemplateName() string {
 
 // User is the function exposed as "user" within the templates and
 // looks up user variables.
-func (t *Template) templateUser(n string) (string, error) {
+func (t *ConfigTemplate) templateUser(n string) (string, error) {
 	result, ok := t.UserVars[n]
 	if !ok {
 		return "", fmt.Errorf("uknown user var: %s", n)

@@ -1,4 +1,4 @@
-package common
+package packer
 
 import (
 	"math"
@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-func TestTemplateProcess_timestamp(t *testing.T) {
-	tpl, err := NewTemplate()
+func TestConfigTemplateProcess_timestamp(t *testing.T) {
+	tpl, err := NewConfigTemplate()
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
@@ -29,8 +29,8 @@ func TestTemplateProcess_timestamp(t *testing.T) {
 	}
 }
 
-func TestTemplateProcess_user(t *testing.T) {
-	tpl, err := NewTemplate()
+func TestConfigTemplateProcess_user(t *testing.T) {
+	tpl, err := NewConfigTemplate()
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
@@ -47,8 +47,8 @@ func TestTemplateProcess_user(t *testing.T) {
 	}
 }
 
-func TestTemplateValidate(t *testing.T) {
-	tpl, err := NewTemplate()
+func TestConfigTemplateValidate(t *testing.T) {
+	tpl, err := NewConfigTemplate()
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}

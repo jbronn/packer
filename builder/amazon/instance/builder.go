@@ -24,6 +24,7 @@ type Config struct {
 	common.PackerConfig    `mapstructure:",squash"`
 	awscommon.AccessConfig `mapstructure:",squash"`
 	awscommon.AMIConfig    `mapstructure:",squash"`
+	awscommon.BlockDevices `mapstructure:",squash"`
 	awscommon.RunConfig    `mapstructure:",squash"`
 
 	AccountId           string `mapstructure:"account_id"`
@@ -37,7 +38,7 @@ type Config struct {
 	X509KeyPath         string `mapstructure:"x509_key_path"`
 	X509UploadPath      string `mapstructure:"x509_upload_path"`
 
-	tpl *common.Template
+	tpl *packer.ConfigTemplate
 }
 
 type Builder struct {
@@ -51,7 +52,7 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		return err
 	}
 
-	b.config.tpl, err = common.NewTemplate()
+	b.config.tpl, err = packer.NewConfigTemplate()
 	if err != nil {
 		return err
 	}
@@ -198,6 +199,7 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 			UserDataFile:       b.config.UserDataFile,
 			SourceAMI:          b.config.SourceAmi,
 			SubnetId:           b.config.SubnetId,
+			BlockDevices:       b.config.BlockDevices,
 		},
 		&common.StepConnectSSH{
 			SSHAddress:     awscommon.SSHAddress(ec2conn, b.config.SSHPort),

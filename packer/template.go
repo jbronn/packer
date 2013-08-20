@@ -50,7 +50,7 @@ type RawBuilderConfig struct {
 type RawPostProcessorConfig struct {
 	Type              string
 	KeepInputArtifact bool `mapstructure:"keep_input_artifact"`
-	RawConfig         interface{}
+	RawConfig         map[string]interface{}
 }
 
 // RawProvisionerConfig represents a raw, unprocessed provisioner configuration.
@@ -162,7 +162,7 @@ func ParseTemplate(data []byte) (t *Template, err error) {
 	// are actually three different formats that the user can use to define
 	// a post-processor.
 	for i, rawV := range rawTpl.PostProcessors {
-		rawPP, err := parsePostProvisioner(i, rawV)
+		rawPP, err := parsePostProcessor(i, rawV)
 		if err != nil {
 			errors = append(errors, err...)
 			continue
@@ -188,6 +188,9 @@ func ParseTemplate(data []byte) (t *Template, err error) {
 				errors = append(errors, fmt.Errorf("Post-processor %d.%d: missing 'type'", i+1, j+1))
 				continue
 			}
+
+			// Remove the input keep_input_artifact option
+			delete(pp, "keep_input_artifact")
 
 			config.RawConfig = pp
 		}
@@ -260,7 +263,7 @@ func ParseTemplateFile(path string) (*Template, error) {
 	return ParseTemplate(data)
 }
 
-func parsePostProvisioner(i int, rawV interface{}) (result []map[string]interface{}, errors []error) {
+func parsePostProcessor(i int, rawV interface{}) (result []map[string]interface{}, errors []error) {
 	switch v := rawV.(type) {
 	case string:
 		result = []map[string]interface{}{

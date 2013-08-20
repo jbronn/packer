@@ -9,17 +9,6 @@ import (
 	"testing"
 )
 
-func testComponentFinder() *ComponentFinder {
-	builderFactory := func(n string) (Builder, error) { return testBuilder(), nil }
-	ppFactory := func(n string) (PostProcessor, error) { return new(TestPostProcessor), nil }
-	provFactory := func(n string) (Provisioner, error) { return new(TestProvisioner), nil }
-	return &ComponentFinder{
-		Builder:       builderFactory,
-		PostProcessor: ppFactory,
-		Provisioner:   provFactory,
-	}
-}
-
 func TestParseTemplateFile_basic(t *testing.T) {
 	data := `
 	{
@@ -634,6 +623,11 @@ func TestTemplate_Build(t *testing.T) {
 	assert.Equal(len(coreBuild.postProcessors[1]), 2, "should have correct number")
 	assert.False(coreBuild.postProcessors[1][0].keepInputArtifact, "shoule be correct")
 	assert.True(coreBuild.postProcessors[1][1].keepInputArtifact, "shoule be correct")
+
+	config := coreBuild.postProcessors[1][1].config
+	if _, ok := config["keep_input_artifact"]; ok {
+		t.Fatal("should not have keep_input_artifact")
+	}
 }
 
 func TestTemplate_Build_ProvisionerOverride(t *testing.T) {

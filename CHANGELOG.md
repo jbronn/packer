@@ -1,4 +1,29 @@
-## 0.3.2 (unreleased)
+## 0.3.4 (unreleased)
+
+
+
+## 0.3.3 (August 19, 2013)
+
+FEATURES:
+
+* builder/virtualbox: support exporting in OVA format. [GH-309]
+
+IMPROVEMENTS:
+
+* core: All HTTP downloads across Packer now support the standard
+  proxy environmental variables (`HTTP_PROXY`, `NO_PROXY`, etc.) [GH-252]
+* builder/amazon: API requests will use HTTP proxy if specified by
+  enviromental variables.
+* builder/digitalocean: API requests will use HTTP proxy if specified
+  by environmental variables.
+
+BUG FIXES:
+
+* core: TCP connection between plugin processes will keep-alive. [GH-312]
+* core: No more "unused key keep_input_artifact" for post processors [GH-310]
+* post-processor/vagrant: `output_path` templates now work again.
+
+## 0.3.2 (August 18, 2013)
 
 FEATURES:
 
@@ -7,6 +32,10 @@ FEATURES:
   parse out components of a template.
 * Packer will detect its own crashes (always a bug) and save a "crash.log"
   file.
+* builder/virtualbox: You may now specify multiple URLs for an ISO
+  using "iso_url" in a template. The URLs will be tried in order.
+* builder/vmware: You may now specify multiple URLs for an ISO
+  using "iso_url" in a template. The URLs will be tried in order.
 
 IMPROVEMENTS:
 
@@ -19,14 +48,27 @@ IMPROVEMENTS:
 * builder/vmware: Do not check for VMware as part of template validation;
   only check at execution.
 * command/build: A path of "-" will read the template from stdin.
+* builder/amazon: add block device mappings [GH-90]
 
 BUG FIXES:
 
+* windows: file URLs are easier to get right as Packer
+  has better parsing and error handling for Windows file paths. [GH-284]
+* builder/amazon/all: Modifying more than one AMI attribute type no longer
+  crashes.
 * builder/amazon-instance: send IAM instance profile data. [GH-294]
+* builder/digitalocean: API request parameters are properly URL
+  encoded. [GH-281]
 * builder/virtualbox: dowload progress won't be shown until download
   actually starts. [GH-288]
+* builder/virtualbox: floppy files names of 13 characters are now properly
+  written to the FAT12 filesystem. [GH-285]
 * builder/vmware: dowload progress won't be shown until download
   actually starts. [GH-288]
+* builder/vmware: interrupt works while typing commands over VNC.
+* builder/virtualbox: floppy files names of 13 characters are now properly
+  written to the FAT12 filesystem. [GH-285]
+* post-processor/vagrant: Process user variables. [GH-295]
 
 ## 0.3.1 (August 12, 2013)
 
