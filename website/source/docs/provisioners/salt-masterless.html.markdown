@@ -30,6 +30,10 @@ Optional:
   [state tree](http://docs.saltstack.com/ref/states/highstate.html#the-salt-state-tree).
   This will be uploaded to the `/srv/salt` on the remote.
 
+* `local_pillar_roots` (string) - The path to your local
+  [pillar roots](http://docs.saltstack.com/ref/configuration/master.html#pillar-configuration).
+  This will be uploaded to the `/srv/pillar` on the remote.
+
 * `skip_bootstrap` (boolean) - By default the salt provisioner runs
   [salt bootstrap](https://github.com/saltstack/salt-bootstrap) to install
   salt. Set this to true to skip this step.
@@ -39,6 +43,10 @@ Optional:
   but the [script itself](https://github.com/saltstack/salt-bootstrap/blob/develop/bootstrap-salt.sh)
   has more detailed usage instructions. By default, no arguments are sent to
   the script.
+
+* `minion_config` (string) - The path to your local
+  [minion config](http://docs.saltstack.com/topics/configuration.html).
+  This will be uploaded to the `/etc/salt` on the remote.
 
 * `temp_config_dir` (string) - Where your local state tree will be copied
   before moving to the `/srv/salt` directory. Default is `/tmp/salt`.

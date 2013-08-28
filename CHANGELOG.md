@@ -1,6 +1,69 @@
-## 0.3.4 (unreleased)
+## 0.3.6 (unreleased)
 
+BUG FIXES:
 
+* core: Fix possible panic when ctrl-C during provisioner run.
+
+## 0.3.5 (August 28, 2013)
+
+FEATURES:
+
+* **NEW BUILDER:** `openstack`. You can now build on OpenStack. [GH-155]
+* **NEW PROVISIONER:** `chef-solo`. You can now provision with Chef
+  using `chef-solo` from local cookbooks.
+* builder/amazon: Copy AMI to multiple regions with `ami_regions`. [GH-322]
+* builder/virtualbox,vmware: Can now use SSH keys as an auth mechanism for
+  SSH using `ssh_key_path`. [GH-70]
+* builder/virtualbox,vmware: Support SHA512 as a checksum type. [GH-356]
+* builder/vmware: The root hard drive type can now be specified with
+  "disk_type_id" for advanced users. [GH-328]
+* provisioner/salt-masterless: Ability to specfy a minion config. [GH-264]
+* provisioner/salt-masterless: Ability to upload pillars. [GH-353]
+
+IMPROVEMENTS:
+
+* core: Output message when Ctrl-C received that we're cleaning up. [GH-338]
+* builder/amazon: Tagging now works with all amazon builder types.
+* builder/vmware: Option `ssh_skip_request_pty` for not requesting a PTY
+  for the SSH connection. [GH-270]
+* builder/vmware: Specify a `vmx_template_path` in order to customize
+  the generated VMX. [GH-270]
+* command/build: Machine-readable output now contains build errors, if any.
+* command/build: An "end" sentinel is outputted in machine-readable output
+  for artifact listing so it is easier to know when it is over.
+
+BUG FIXES:
+
+* core: Fixed a couple cases where a double ctrl-C could panic.
+* core: Template validation fails if an override is specified for a
+  non-existent builder. [GH-336]
+* core: The SSH connection is heartbeated so that drops can be
+  detected. [GH-200]
+* builder/amazon/instance: Remove check for ec2-ami-tools because it
+  didn't allow absolute paths to work properly. [GH-330]
+* builder/digitalocean: Send a soft shutdown request so that files
+  are properly synced before shutdown. [GH-332]
+* command/build,command/validate: If a non-existent build is specified to
+  '-only' or '-except', it is now an error. [GH-326]
+* post-processor/vagrant: Setting OutputPath with a timestamp now
+  always works properly. [GH-324]
+* post-processor/vagrant: VirtualBox OVA formats now turn into
+  Vagrant boxes properly. [GH-331]
+* provisioner/shell: Retry upload if start command fails, making reboot
+  handling much more robust.
+
+## 0.3.4 (August 21, 2013)
+
+IMPROVEMENTS:
+
+* post-processor/vagrant: the file being compressed will be shown
+  in the UI [GH-314]
+
+BUG FIXES:
+
+* core: Avoid panics when double-interrupting Packer.
+* provisioner/shell: Retry shell script uploads, making reboots more
+  robust if they happen to fail in this stage. [GH-282]
 
 ## 0.3.3 (August 19, 2013)
 

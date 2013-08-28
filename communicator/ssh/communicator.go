@@ -10,7 +10,10 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"path/filepath"
+	"sync"
+	"time"
 )
 
 type comm struct {
@@ -28,6 +31,9 @@ type Config struct {
 	// in use will be closed as part of the Close method, or in the
 	// case an error occurs.
 	Connection func() (net.Conn, error)
+
+	// NoPty, if true, will not request a pty from the remote end.
+	NoPty bool
 }
 
 // Creates a new packer.Communicator implementation over SSH. This takes
@@ -57,15 +63,17 @@ func (c *comm) Start(cmd *packer.RemoteCmd) (err error) {
 	session.Stdout = cmd.Stdout
 	session.Stderr = cmd.Stderr
 
-	// Request a PTY
-	termModes := ssh.TerminalModes{
-		ssh.ECHO:          0,     // do not echo
-		ssh.TTY_OP_ISPEED: 14400, // input speed = 14.4kbaud
-		ssh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
-	}
+	if !c.config.NoPty {
+		// Request a PTY
+		termModes := ssh.TerminalModes{
+			ssh.ECHO:          0,     // do not echo
+			ssh.TTY_OP_ISPEED: 14400, // input speed = 14.4kbaud
+			ssh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
+		}
 
-	if err = session.RequestPty("xterm", 80, 40, termModes); err != nil {
-		return
+		if err = session.RequestPty("xterm", 80, 40, termModes); err != nil {
+			return
+		}
 	}
 
 	log.Printf("starting remote command: %s", cmd.Command)
@@ -74,10 +82,16 @@ func (c *comm) Start(cmd *packer.RemoteCmd) (err error) {
 		return
 	}
 
+	// A channel to keep track of our done state
+	doneCh := make(chan struct{})
+	sessionLock := new(sync.Mutex)
+	timedOut := false
+
 	// Start a goroutine to wait for the session to end and set the
 	// exit boolean and status.
 	go func() {
 		defer session.Close()
+
 		err := session.Wait()
 		exitStatus := 0
 		if err != nil {
@@ -87,46 +101,61 @@ func (c *comm) Start(cmd *packer.RemoteCmd) (err error) {
 			}
 		}
 
+		sessionLock.Lock()
+		defer sessionLock.Unlock()
+
+		if timedOut {
+			// We timed out, so set the exit status to -1
+			exitStatus = -1
+		}
+
 		log.Printf("remote command exited with '%d': %s", exitStatus, cmd.Command)
 		cmd.SetExited(exitStatus)
+		close(doneCh)
+	}()
+
+	go func() {
+		failures := 0
+		for {
+			dummy, err := c.config.Connection()
+			if err == nil {
+				failures = 0
+				dummy.Close()
+			}
+
+			select {
+			case <-doneCh:
+				return
+			default:
+			}
+
+			if err != nil {
+				log.Printf("background SSH connection checker failure: %s", err)
+				failures += 1
+			}
+
+			if failures < 5 {
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			// Acquire a lock in order to modify session state
+			sessionLock.Lock()
+			defer sessionLock.Unlock()
+
+			// Kill the connection and mark that we timed out.
+			log.Printf("Too many SSH connection failures. Killing it!")
+			c.conn.Close()
+			timedOut = true
+
+			return
+		}
 	}()
 
 	return
 }
 
 func (c *comm) Upload(path string, input io.Reader) error {
-	session, err := c.newSession()
-	if err != nil {
-		return err
-	}
-
-	defer session.Close()
-
-	// Get a pipe to stdin so that we can send data down
-	w, err := session.StdinPipe()
-	if err != nil {
-		return err
-	}
-
-	// We only want to close once, so we nil w after we close it,
-	// and only close in the defer if it hasn't been closed already.
-	defer func() {
-		if w != nil {
-			w.Close()
-		}
-	}()
-
-	// Get a pipe to stdout so that we can get responses back
-	stdoutPipe, err := session.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stdoutR := bufio.NewReader(stdoutPipe)
-
-	// Set stderr to a bytes buffer
-	stderr := new(bytes.Buffer)
-	session.Stderr = stderr
-
 	// The target directory and file for talking the SCP protocol
 	target_dir := filepath.Dir(path)
 	target_file := filepath.Base(path)
@@ -136,69 +165,41 @@ func (c *comm) Upload(path string, input io.Reader) error {
 	// which works for unix and windows
 	target_dir = filepath.ToSlash(target_dir)
 
-	// Start the sink mode on the other side
-	// TODO(mitchellh): There are probably issues with shell escaping the path
-	log.Println("Starting remote scp process in sink mode")
-	if err = session.Start("scp -vt " + target_dir); err != nil {
-		return err
+	scpFunc := func(w io.Writer, stdoutR *bufio.Reader) error {
+		return scpUploadFile(target_file, input, w, stdoutR)
 	}
 
-	// Determine the length of the upload content by copying it
-	// into an in-memory buffer. Note that this means what we upload
-	// must fit into memory.
-	log.Println("Copying input data into in-memory buffer so we can get the length")
-	input_memory := new(bytes.Buffer)
-	if _, err = io.Copy(input_memory, input); err != nil {
-		return err
-	}
+	return c.scpSession("scp -vt "+target_dir, scpFunc)
+}
 
-	// Start the protocol
-	log.Println("Beginning file upload...")
-	fmt.Fprintln(w, "C0644", input_memory.Len(), target_file)
-	err = checkSCPStatus(stdoutR)
-	if err != nil {
-		return err
-	}
-
-	io.Copy(w, input_memory)
-	fmt.Fprint(w, "\x00")
-	err = checkSCPStatus(stdoutR)
-	if err != nil {
-		return err
-	}
-
-	// Close the stdin, which sends an EOF, and then set w to nil so that
-	// our defer func doesn't close it again since that is unsafe with
-	// the Go SSH package.
-	log.Println("Upload complete, closing stdin pipe")
-	w.Close()
-	w = nil
-
-	// Wait for the SCP connection to close, meaning it has consumed all
-	// our data and has completed. Or has errored.
-	log.Println("Waiting for SSH session to complete")
-	err = session.Wait()
-	if err != nil {
-		if exitErr, ok := err.(*ssh.ExitError); ok {
-			// Otherwise, we have an ExitErorr, meaning we can just read
-			// the exit status
-			log.Printf("non-zero exit status: %d", exitErr.ExitStatus())
-
-			// If we exited with status 127, it means SCP isn't available.
-			// Return a more descriptive error for that.
-			if exitErr.ExitStatus() == 127 {
-				return errors.New(
-					"SCP failed to start. This usually means that SCP is not\n" +
-						"properly installed on the remote system.")
+func (c *comm) UploadDir(dst string, src string, excl []string) error {
+	log.Printf("Upload dir '%s' to '%s'", src, dst)
+	scpFunc := func(w io.Writer, r *bufio.Reader) error {
+		uploadEntries := func() error {
+			f, err := os.Open(src)
+			if err != nil {
+				return err
 			}
+			defer f.Close()
+
+			entries, err := f.Readdir(-1)
+			if err != nil {
+				return err
+			}
+
+			return scpUploadDir(src, entries, w, r)
 		}
 
-		return err
+		if src[len(src)-1] != '/' {
+			log.Printf("No trailing slash, creating the source directory name")
+			return scpUploadDirProtocol(filepath.Base(src), w, r, uploadEntries)
+		} else {
+			// Trailing slash, so only upload the contents
+			return uploadEntries()
+		}
 	}
 
-	log.Printf("scp stderr (length %d): %s", stderr.Len(), stderr.String())
-
-	return nil
+	return c.scpSession("scp -rvt "+dst, scpFunc)
 }
 
 func (c *comm) Download(string, io.Writer) error {
@@ -250,6 +251,84 @@ func (c *comm) reconnect() (err error) {
 	return
 }
 
+func (c *comm) scpSession(scpCommand string, f func(io.Writer, *bufio.Reader) error) error {
+	session, err := c.newSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	// Get a pipe to stdin so that we can send data down
+	stdinW, err := session.StdinPipe()
+	if err != nil {
+		return err
+	}
+
+	// We only want to close once, so we nil w after we close it,
+	// and only close in the defer if it hasn't been closed already.
+	defer func() {
+		if stdinW != nil {
+			stdinW.Close()
+		}
+	}()
+
+	// Get a pipe to stdout so that we can get responses back
+	stdoutPipe, err := session.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stdoutR := bufio.NewReader(stdoutPipe)
+
+	// Set stderr to a bytes buffer
+	stderr := new(bytes.Buffer)
+	session.Stderr = stderr
+
+	// Start the sink mode on the other side
+	// TODO(mitchellh): There are probably issues with shell escaping the path
+	log.Println("Starting remote scp process: %s", scpCommand)
+	if err := session.Start(scpCommand); err != nil {
+		return err
+	}
+
+	// Call our callback that executes in the context of SCP
+	log.Println("Started SCP session, beginning transfers...")
+	if err := f(stdinW, stdoutR); err != nil {
+		return err
+	}
+
+	// Close the stdin, which sends an EOF, and then set w to nil so that
+	// our defer func doesn't close it again since that is unsafe with
+	// the Go SSH package.
+	log.Println("SCP session complete, closing stdin pipe.")
+	stdinW.Close()
+	stdinW = nil
+
+	// Wait for the SCP connection to close, meaning it has consumed all
+	// our data and has completed. Or has errored.
+	log.Println("Waiting for SSH session to complete.")
+	err = session.Wait()
+	if err != nil {
+		if exitErr, ok := err.(*ssh.ExitError); ok {
+			// Otherwise, we have an ExitErorr, meaning we can just read
+			// the exit status
+			log.Printf("non-zero exit status: %d", exitErr.ExitStatus())
+
+			// If we exited with status 127, it means SCP isn't available.
+			// Return a more descriptive error for that.
+			if exitErr.ExitStatus() == 127 {
+				return errors.New(
+					"SCP failed to start. This usually means that SCP is not\n" +
+						"properly installed on the remote system.")
+			}
+		}
+
+		return err
+	}
+
+	log.Printf("scp stderr (length %d): %s", stderr.Len(), stderr.String())
+	return nil
+}
+
 // checkSCPStatus checks that a prior command sent to SCP completed
 // successfully. If it did not complete successfully, an error will
 // be returned.
@@ -267,6 +346,103 @@ func checkSCPStatus(r *bufio.Reader) error {
 		}
 
 		return errors.New(string(message))
+	}
+
+	return nil
+}
+
+func scpUploadFile(dst string, src io.Reader, w io.Writer, r *bufio.Reader) error {
+	// Determine the length of the upload content by copying it
+	// into an in-memory buffer. Note that this means what we upload
+	// must fit into memory.
+	log.Println("Copying input data into in-memory buffer so we can get the length")
+	inputBuf := new(bytes.Buffer)
+	if _, err := io.Copy(inputBuf, src); err != nil {
+		return err
+	}
+
+	// Start the protocol
+	log.Println("Beginning file upload...")
+	fmt.Fprintln(w, "C0644", inputBuf.Len(), dst)
+	err := checkSCPStatus(r)
+	if err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(w, inputBuf); err != nil {
+		return err
+	}
+
+	fmt.Fprint(w, "\x00")
+	err = checkSCPStatus(r)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func scpUploadDirProtocol(name string, w io.Writer, r *bufio.Reader, f func() error) error {
+	log.Printf("SCP: starting directory upload: %s", name)
+	fmt.Fprintln(w, "D0755 0", name)
+	err := checkSCPStatus(r)
+	if err != nil {
+		return err
+	}
+
+	if err := f(); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(w, "E")
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func scpUploadDir(root string, fs []os.FileInfo, w io.Writer, r *bufio.Reader) error {
+	for _, fi := range fs {
+		realPath := filepath.Join(root, fi.Name())
+
+		if !fi.IsDir() {
+			// It is a regular file, just upload it
+			f, err := os.Open(realPath)
+			if err != nil {
+				return err
+			}
+
+			err = func() error {
+				defer f.Close()
+				return scpUploadFile(fi.Name(), f, w, r)
+			}()
+
+			if err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		// It is a directory, recursively upload
+		err := scpUploadDirProtocol(fi.Name(), w, r, func() error {
+			f, err := os.Open(realPath)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+
+			entries, err := f.Readdir(-1)
+			if err != nil {
+				return err
+			}
+
+			return scpUploadDir(realPath, entries, w, r)
+		})
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

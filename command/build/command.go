@@ -187,8 +187,18 @@ func (c Command) Run(env packer.Environment, args []string) int {
 	}
 
 	if len(errors) > 0 {
+		env.Ui().Machine("error-count", strconv.FormatInt(int64(len(errors)), 10))
+
 		env.Ui().Error("\n==> Some builds didn't complete successfully and had errors:")
 		for name, err := range errors {
+			// Create a UI for the machine readable stuff to be targetted
+			ui := &packer.TargettedUi{
+				Target: name,
+				Ui:     env.Ui(),
+			}
+
+			ui.Machine("error", err.Error())
+
 			env.Ui().Error(fmt.Sprintf("--> %s: %s", name, err))
 		}
 	}
@@ -233,6 +243,7 @@ func (c Command) Run(env packer.Environment, args []string) int {
 					ui.Machine("artifact", iStr, "nil")
 				}
 
+				ui.Machine("artifact", iStr, "end")
 				env.Ui().Say(message.String())
 			}
 		}

@@ -20,13 +20,16 @@ func setupSignalHandlers(env packer.Environment) {
 		<-ch
 		log.Println("First interrupt. Ignoring to allow plugins to clean up.")
 
+		env.Ui().Error("Interrupt signal received. Cleaning up...")
+
 		// Second interrupt. Go down hard.
 		<-ch
 		log.Println("Second interrupt. Exiting now.")
 
 		env.Ui().Error("Interrupt signal received twice. Forcefully exiting now.")
 
-		// Force kill all the plugins
+		// Force kill all the plugins, but mark that we're killing them
+		// first so that we don't get panics everywhere.
 		plugin.CleanupClients()
 		os.Exit(1)
 	}()

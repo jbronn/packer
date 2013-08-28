@@ -39,7 +39,9 @@ of `packer build`.
 	<dt>artifact-count (1)</dt>
 	<dd>
 		<p>
-		The number of artifacts associated with the given target.
+		The number of artifacts associated with the given target. This
+		will always be outputted _before_ any other artifact information,
+		so you're able to know how many upcoming artifacts to look for.
 		</p>
 
 		<p>
@@ -56,6 +58,15 @@ of `packer build`.
 
 		<p>
 		<strong>Data 1: id</strong> - The unique ID of the builder.
+		</p>
+	</dd>
+
+	<dt>artifact subtype: end (0)</dt>
+	<dd>
+		<p>
+		The last machine-readable output line outputted for an artifact.
+		This is a sentinel value so you know that no more data related to
+		the targetted artifact will be outputted.
 		</p>
 	</dd>
 
@@ -120,6 +131,31 @@ of `packer build`.
 
 		<p>
 		<strong>Data 1: string</strong> - The string output for the artifact.
+		</p>
+	</dd>
+
+	<dt>error-count (1)</dt>
+	<dd>
+		<p>
+		The number of errors that occurred during the build. This will
+		always be outputted before any errors so you know how many are coming.
+		</p>
+
+		<p>
+		<strong>Data 1: count</strong> - The number of build errors as
+		a base 10 integer.
+		</p>
+	</dd>
+
+	<dt>error (1)</dt>
+	<dd>
+		<p>
+		A build error that occurred. The target of this output will be
+		the build that had the error.
+		</p>
+
+		<p>
+		<strong>Data 1: error</strong> - The error message as a string.
 		</p>
 	</dd>
 </dl>

@@ -24,8 +24,8 @@ Ubuntu to self-install. Still, the example serves to show the basic configuratio
 {
   "type": "virtualbox",
   "guest_os_type": "Ubuntu_64",
-  "iso_url": "http://releases.ubuntu.com/12.04/ubuntu-12.04.2-server-amd64.iso",
-  "iso_checksum": "af5f788aee1b32c4b2634734309cc9e9",
+  "iso_url": "http://releases.ubuntu.com/12.04/ubuntu-12.04.3-server-amd64.iso",
+  "iso_checksum": "2cbe868812a871242cdcdd8f2fd6feb9",
   "iso_checksum_type": "md5",
   "ssh_username": "packer",
   "ssh_wait_timeout": "30s",
@@ -47,7 +47,7 @@ Required:
   checksum is specified with `iso_checksum_type`, documented below.
 
 * `iso_checksum_type` (string) - The type of the checksum specified in
-  `iso_checksum`. Valid values are "md5", "sha1", or "sha256" currently.
+  `iso_checksum`. Valid values are "md5", "sha1", "sha256", or "sha512" currently.
 
 * `iso_url` (string) - A URL to the ISO containing the installation image.
   This URL can be either an HTTP URL or a file URL (or path to a file).
@@ -155,6 +155,11 @@ Optional:
   to the SSH port on the guest machine. Because Packer often runs in parallel,
   Packer will choose a randomly available port in this range to use as the
   host port.
+
+* `ssh_key_path` (string) - Path to a private key to use for authenticating
+  with SSH. By default this is not set (key-based auth won't be used).
+  The associated public key is expected to already be configured on the
+  VM being prepared by some other process (kickstart, etc.).
 
 * `ssh_password` (string) - The password for `ssh_username` to use to
   authenticate with SSH. By default this is the empty string.

@@ -6,6 +6,7 @@ import (
 	"github.com/mitchellh/multistep"
 	"github.com/mitchellh/packer/common"
 	"github.com/mitchellh/packer/packer"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
@@ -27,6 +28,7 @@ type config struct {
 
 	DiskName          string            `mapstructure:"vmdk_name"`
 	DiskSize          uint              `mapstructure:"disk_size"`
+	DiskTypeId        string            `mapstructure:"disk_type_id"`
 	FloppyFiles       []string          `mapstructure:"floppy_files"`
 	GuestOSType       string            `mapstructure:"guest_os_type"`
 	ISOChecksum       string            `mapstructure:"iso_checksum"`
@@ -42,11 +44,14 @@ type config struct {
 	SkipCompaction    bool              `mapstructure:"skip_compaction"`
 	ShutdownCommand   string            `mapstructure:"shutdown_command"`
 	SSHUser           string            `mapstructure:"ssh_username"`
+	SSHKeyPath        string            `mapstructure:"ssh_key_path"`
 	SSHPassword       string            `mapstructure:"ssh_password"`
 	SSHPort           uint              `mapstructure:"ssh_port"`
+	SSHSkipRequestPty bool              `mapstructure:"ssh_skip_request_pty"`
 	ToolsUploadFlavor string            `mapstructure:"tools_upload_flavor"`
 	ToolsUploadPath   string            `mapstructure:"tools_upload_path"`
 	VMXData           map[string]string `mapstructure:"vmx_data"`
+	VMXTemplatePath   string            `mapstructure:"vmx_template_path"`
 	VNCPortMin        uint              `mapstructure:"vnc_port_min"`
 	VNCPortMax        uint              `mapstructure:"vnc_port_max"`
 
@@ -87,6 +92,11 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 
 	if b.config.DiskSize == 0 {
 		b.config.DiskSize = 40000
+	}
+
+	if b.config.DiskTypeId == "" {
+		// Default is growable virtual disk split in 2GB files.
+		b.config.DiskTypeId = "1"
 	}
 
 	if b.config.FloppyFiles == nil {
@@ -150,6 +160,7 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		"boot_wait":           &b.config.RawBootWait,
 		"shutdown_timeout":    &b.config.RawShutdownTimeout,
 		"ssh_wait_timeout":    &b.config.RawSSHWaitTimeout,
+		"vmx_template_path":   &b.config.VMXTemplatePath,
 	}
 
 	for n, ptr := range templates {
@@ -286,6 +297,16 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		}
 	}
 
+	if b.config.SSHKeyPath != "" {
+		if _, err := os.Stat(b.config.SSHKeyPath); err != nil {
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("ssh_key_path is invalid: %s", err))
+		} else if _, err := sshKeyToKeyring(b.config.SSHKeyPath); err != nil {
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("ssh_key_path is invalid: %s", err))
+		}
+	}
+
 	if b.config.SSHUser == "" {
 		errs = packer.MultiErrorAppend(
 			errs, errors.New("An ssh_username must be specified."))
@@ -322,6 +343,14 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 	if _, err := template.New("path").Parse(b.config.ToolsUploadPath); err != nil {
 		errs = packer.MultiErrorAppend(
 			errs, fmt.Errorf("tools_upload_path invalid: %s", err))
+	}
+
+	if b.config.VMXTemplatePath != "" {
+		if err := b.validateVMXTemplatePath(); err != nil {
+			errs = packer.MultiErrorAppend(
+				errs, fmt.Errorf("vmx_template_path is invalid: %s", err))
+		}
+
 	}
 
 	if b.config.VNCPortMin > b.config.VNCPortMax {
@@ -376,6 +405,7 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 			SSHAddress:     sshAddress,
 			SSHConfig:      sshConfig,
 			SSHWaitTimeout: b.config.sshWaitTimeout,
+			NoPty:          b.config.SSHSkipRequestPty,
 		},
 		&stepUploadTools{},
 		&common.StepProvision{},
@@ -448,4 +478,19 @@ func (b *Builder) Cancel() {
 		log.Println("Cancelling the step runner...")
 		b.runner.Cancel()
 	}
+}
+
+func (b *Builder) validateVMXTemplatePath() error {
+	f, err := os.Open(b.config.VMXTemplatePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	data, err := ioutil.ReadAll(f)
+	if err != nil {
+		return err
+	}
+
+	return b.config.tpl.Validate(string(data))
 }

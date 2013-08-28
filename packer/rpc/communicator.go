@@ -44,6 +44,12 @@ type CommunicatorUploadArgs struct {
 	ReaderAddress string
 }
 
+type CommunicatorUploadDirArgs struct {
+	Dst     string
+	Src     string
+	Exclude []string
+}
+
 func Communicator(client *rpc.Client) *communicator {
 	return &communicator{client}
 }
@@ -78,7 +84,8 @@ func (c *communicator) Start(cmd *packer.RemoteCmd) (err error) {
 
 		conn, err := responseL.Accept()
 		if err != nil {
-			log.Panic(err)
+			cmd.SetExited(123)
+			return
 		}
 
 		defer conn.Close()
@@ -87,7 +94,8 @@ func (c *communicator) Start(cmd *packer.RemoteCmd) (err error) {
 
 		var finished CommandFinished
 		if err := decoder.Decode(&finished); err != nil {
-			log.Panic(err)
+			cmd.SetExited(123)
+			return
 		}
 
 		cmd.SetExited(finished.ExitStatus)
@@ -119,6 +127,22 @@ func (c *communicator) Upload(path string, r io.Reader) (err error) {
 
 	err = c.client.Call("Communicator.Upload", &args, new(interface{}))
 	return
+}
+
+func (c *communicator) UploadDir(dst string, src string, exclude []string) error {
+	args := &CommunicatorUploadDirArgs{
+		Dst:     dst,
+		Src:     src,
+		Exclude: exclude,
+	}
+
+	var reply error
+	err := c.client.Call("Communicator.UploadDir", args, &reply)
+	if err == nil {
+		err = reply
+	}
+
+	return err
 }
 
 func (c *communicator) Download(path string, w io.Writer) (err error) {
@@ -219,6 +243,10 @@ func (c *CommunicatorServer) Upload(args *CommunicatorUploadArgs, reply *interfa
 
 	err = c.c.Upload(args.Path, readerC)
 	return
+}
+
+func (c *CommunicatorServer) UploadDir(args *CommunicatorUploadDirArgs, reply *error) error {
+	return c.c.UploadDir(args.Dst, args.Src, args.Exclude)
 }
 
 func (c *CommunicatorServer) Download(args *CommunicatorDownloadArgs, reply *interface{}) (err error) {

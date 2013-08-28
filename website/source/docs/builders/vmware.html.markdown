@@ -50,7 +50,7 @@ Required:
   checksum is specified with `iso_checksum_type`, documented below.
 
 * `iso_checksum_type` (string) - The type of the checksum specified in
-  `iso_checksum`. Valid values are "md5", "sha1", or "sha256" currently.
+  `iso_checksum`. Valid values are "md5", "sha1", "sha256", or "sha512" currently.
 
 * `iso_url` (string) - A URL to the ISO containing the installation image.
   This URL can be either an HTTP URL or a file URL (or path to a file).
@@ -79,6 +79,12 @@ Optional:
   The builder uses expandable, not fixed-size virtual hard disks, so the
   actual file representing the disk will not use the full size unless it is full.
   By default this is set to 40,000 (40 GB).
+
+* `disk_type_id` (string) - The type of VMware virtual disk to create.
+  The default is "1", which corresponds to a growable virtual disk split in
+  2GB files.  This option is for advanced usage, modify only if you
+  know what you're doing.  For more information, please consult the
+  [Virtual Disk Manager User's Guide](http://www.vmware.com/pdf/VirtualDiskManager.pdf).
 
 * `floppy_files` (array of strings) - A list of files to put onto a floppy
   disk that is attached when the VM is booted for the first time. This is
@@ -142,11 +148,20 @@ Optional:
   If it doesn't shut down in this time, it is an error. By default, the timeout
   is "5m", or five minutes.
 
+* `ssh_key_path` (string) - Path to a private key to use for authenticating
+  with SSH. By default this is not set (key-based auth won't be used).
+  The associated public key is expected to already be configured on the
+  VM being prepared by some other process (kickstart, etc.).
+
 * `ssh_password` (string) - The password for `ssh_username` to use to
   authenticate with SSH. By default this is the empty string.
 
 * `ssh_port` (int) - The port that SSH will listen on within the virtual
   machine. By default this is 22.
+
+* `ssh_skip_request_pty` (bool) - If true, a pty will not be requested as
+  part of the SSH connection. By default, this is "false", so a pty
+  _will_ be requested.
 
 * `ssh_wait_timeout` (string) - The duration to wait for SSH to become
   available. By default this is "20m", or 20 minutes. Note that this should
@@ -179,6 +194,13 @@ Optional:
   the initial `boot_command`. Because Packer generally runs in parallel, Packer
   uses a randomly chosen port in this range that appears available. By default
   this is 5900 to 6000. The minimum and maximum ports are inclusive.
+
+* `vmx_template_path` (string) - Path to a
+  [configuration template](/docs/templates/configuration-templates.html) that
+  defines the contents of the virtual machine VMX file for VMware. This is
+  for **advanced users only** as this can render the virtual machine
+  non-functional. See below for more information. For basic VMX modifications,
+  try `vmx_data` first.
 
 ## Boot Command
 
@@ -230,3 +252,29 @@ an Ubuntu 12.04 installer:
   "initrd=/install/initrd.gz -- &lt;enter&gt;"
 ]
 </pre>
+
+## VMX Template
+
+The heart of a VMware machine is the "vmx" file. This contains all the
+virtual hardware metadata necessary for the VM to function. Packer by default
+uses a [safe, flexible VMX file](https://github.com/mitchellh/packer/blob/20541a7eda085aa5cf35bfed5069592ca49d106e/builder/vmware/step_create_vmx.go#L84).
+But for advanced users, this template can be customized. This allows
+Packer to build virtual machines of effectively any guest operating system
+type.
+
+<div class="alert alert-block alert-warn">
+<p>
+<strong>This is an advanced feature.</strong> Modifying the VMX template
+can easily cause your virtual machine to not boot properly. Please only
+modify the template if you know what you're doing.
+</p>
+</div>
+
+Within the template, a handful of variables are available so that your
+template can continue working with the rest of the Packer machinery. Using
+these variables isn't required, however.
+
+* `Name` - The name of the virtual machine.
+* `GuestOS` - The VMware-valid guest OS type.
+* `DiskName` - The filename (without the suffix) of the main virtual disk.
+* `ISOPath` - The path to the ISO to use for the OS installation.
