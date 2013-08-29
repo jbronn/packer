@@ -41,6 +41,12 @@ func (s *StepDownload) Run(state map[string]interface{}) multistep.StepAction {
 	cache := state["cache"].(packer.Cache)
 	ui := state["ui"].(packer.Ui)
 
+	// Hack to ignore sysresc_cd download.
+	if s.Url[0] == "" {
+		state[s.ResultKey] = ""
+		return multistep.ActionContinue
+	}
+
 	var checksum []byte
 	if s.Checksum != "" {
 		var err error
