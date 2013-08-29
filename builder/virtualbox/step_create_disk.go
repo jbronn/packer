@@ -51,7 +51,7 @@ func (s *stepCreateDisk) Run(state map[string]interface{}) multistep.StepAction 
 
 	// Add the SATA controller so we can later attach the disk.
 	controllerName = "SATA Controller"
-	sataPortCount := "4"
+	sataPortCount := "1"
 	command = []string{
 		"storagectl", vmName,
 		"--name", controllerName,
