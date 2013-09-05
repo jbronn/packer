@@ -9,9 +9,11 @@ import (
 
 // AccessConfig is for common configuration related to openstack access
 type AccessConfig struct {
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
-	Provider string `mapstructure:"provider"`
+	Username  string `mapstructure:"username"`
+	Password  string `mapstructure:"password"`
+	Project   string `mapstructure:"project"`
+	Provider  string `mapstructure:"provider"`
+	RawRegion string `mapstructure:"region"`
 }
 
 // Auth returns a valid Auth object for access to openstack services, or
@@ -19,6 +21,7 @@ type AccessConfig struct {
 func (c *AccessConfig) Auth() (gophercloud.AccessProvider, error) {
 	username := c.Username
 	password := c.Password
+	project := c.Project
 	provider := c.Provider
 
 	if username == "" {
@@ -26,6 +29,9 @@ func (c *AccessConfig) Auth() (gophercloud.AccessProvider, error) {
 	}
 	if password == "" {
 		password = os.Getenv("SDK_PASSWORD")
+	}
+	if project == "" {
+		project = os.Getenv("SDK_PROJECT")
 	}
 	if provider == "" {
 		provider = os.Getenv("SDK_PROVIDER")
@@ -37,7 +43,15 @@ func (c *AccessConfig) Auth() (gophercloud.AccessProvider, error) {
 		AllowReauth: true,
 	}
 
+	if project != "" {
+		authoptions.TenantName = project
+	}
+
 	return gophercloud.Authenticate(provider, authoptions)
+}
+
+func (c *AccessConfig) Region() string {
+	return c.RawRegion
 }
 
 func (c *AccessConfig) Prepare(t *packer.ConfigTemplate) []error {
@@ -63,6 +77,10 @@ func (c *AccessConfig) Prepare(t *packer.ConfigTemplate) []error {
 			errs = append(
 				errs, fmt.Errorf("Error processing %s: %s", n, err))
 		}
+	}
+
+	if c.RawRegion == "" {
+		errs = append(errs, fmt.Errorf("region must be specified"))
 	}
 
 	if len(errs) > 0 {

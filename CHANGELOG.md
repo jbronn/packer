@@ -1,8 +1,49 @@
-## 0.3.6 (unreleased)
+## 0.3.7 (unreleased)
+
+BACKWARDS INCOMPATIBILITIES:
+
+* The "event_delay" option for the DigitalOcean builder is now gone.
+  The builder automatically waits for events to go away. Run your templates
+  through `packer fix` to get rid of these.
+
+IMPROVEMENTS:
+
+* builder/digitalocean: Retry on any pending event errors.
+* builder/openstack: Can now specify a project. [GH-382]
 
 BUG FIXES:
 
+* command/inspect: Fix weird output for default values for optional vars.
+
+## 0.3.6 (September 2, 2013)
+
+FEATURES:
+
+* User variables can now be specified as "required", meaning the user
+  MUST specify a value. Just set the default value to "null". [GH-374]
+
+IMPROVEMENTS:
+
+* core: Much improved interrupt handling. For example, interrupts now
+  cancel much more quickly within provisioners.
+* builder/amazon: In `-debug` mode, the keypair used will be saved to
+  the current directory so you can access the machine. [GH-373]
+* builder/amazon: In `-debug` mode, the DNS is outputted.
+* builder/openstack: IPv6 addresses supported for SSH. [GH-379]
+* communicator/ssh: Support for private keys encrypted using PKCS8. [GH-376]
+* provisioner/chef-solo: You can now use user variables in the `json`
+  configuration for Chef. [GH-362]
+
+BUG FIXES:
+
+* core: Concurrent map access is completely gone, fixing rare issues
+  with runtime memory corruption. [GH-307]
 * core: Fix possible panic when ctrl-C during provisioner run.
+* builder/digitalocean: Retry destroy a few times because DO sometimes
+  gives false errors.
+* builder/openstack: Properly handle the case no image is made. [GH-375]
+* builder/openstack: Specifying a region is now required in a template.
+* provisioners/salt-masterless: Use filepath join to properly join paths.
 
 ## 0.3.5 (August 28, 2013)
 

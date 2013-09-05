@@ -62,21 +62,22 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 	}
 	api := &gophercloud.ApiCriteria{
 		Name:      "cloudServersOpenStack",
-		Region:    "DFW",
+		Region:    b.config.AccessConfig.Region(),
 		VersionId: "2",
 		UrlChoice: gophercloud.PublicURL,
 	}
 	csp, err := gophercloud.ServersApi(auth, *api)
 	if err != nil {
+		log.Printf("Region: %s", b.config.AccessConfig.Region())
 		return nil, err
 	}
 
 	// Setup the state bag and initial state for the steps
-	state := make(map[string]interface{})
-	state["config"] = b.config
-	state["csp"] = csp
-	state["hook"] = hook
-	state["ui"] = ui
+	state := new(multistep.BasicStateBag)
+	state.Put("config", b.config)
+	state.Put("csp", csp)
+	state.Put("hook", hook)
+	state.Put("ui", ui)
 
 	// Build the steps
 	steps := []multistep.Step{
@@ -108,13 +109,18 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 	b.runner.Run(state)
 
 	// If there was an error, return that
-	if rawErr, ok := state["error"]; ok {
+	if rawErr, ok := state.GetOk("error"); ok {
 		return nil, rawErr.(error)
+	}
+
+	// If there are no images, then just return
+	if _, ok := state.GetOk("image"); !ok {
+		return nil, nil
 	}
 
 	// Build the artifact and return it
 	artifact := &Artifact{
-		ImageId:        state["image"].(string),
+		ImageId:        state.Get("image").(string),
 		BuilderIdValue: BuilderId,
 		Conn:           csp,
 	}

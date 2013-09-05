@@ -24,41 +24,10 @@ var KeepFileExtensions = []string{".vmdk", ".vmx"}
 //   <nothing>
 type stepCleanFiles struct{}
 
-func (stepCleanFiles) Run(state map[string]interface{}) multistep.StepAction {
-	config := state["config"].(*config)
-	ui := state["ui"].(packer.Ui)
-	vmxPath := state["vmx_path"].(string)
 
-	// Restoring VMX values.
-	f, err := os.Open(vmxPath)
-	if err != nil {
-		err := fmt.Errorf("Error opening VMX for reading: %s", err)
-		state["error"] = err
-		ui.Error(err.Error())
-		return multistep.ActionHalt
-	}
-	defer f.Close()
-
-	vmxBytes, err := ioutil.ReadAll(f)
-	if err != nil {
-		err := fmt.Errorf("Error reading contents of VMX: %s", err)
-		state["error"] = err
-		ui.Error(err.Error())
-		return multistep.ActionHalt
-	}
-
-	vmxData := ParseVMX(string(vmxBytes))
-	vmxData["ide1:0.deviceType"] = "atapi-cdrom"
-	vmxData["ide1:0.startConnected"] = "False"
-	delete(vmxData, "ide1:0.fileName")
-	delete(vmxData, "bios.bootOrder")
-
-	if err := WriteVMX(vmxPath, vmxData); err != nil {
-		err := fmt.Errorf("Error creating VMX file: %s", err)
-		state["error"] = err
-		ui.Error(err.Error())
-		return multistep.ActionHalt
-	}
+func (stepCleanFiles) Run(state multistep.StateBag) multistep.StepAction {
+	config := state.Get("config").(*config)
+	ui := state.Get("ui").(packer.Ui)
 
 	ui.Say("Deleting unnecessary VMware files...")
 	visit := func(path string, info os.FileInfo, err error) error {
@@ -88,11 +57,11 @@ func (stepCleanFiles) Run(state map[string]interface{}) multistep.StepAction {
 	}
 
 	if err := filepath.Walk(config.OutputDir, visit); err != nil {
-		state["error"] = err
+		state.Put("error", err)
 		return multistep.ActionHalt
 	}
 
 	return multistep.ActionContinue
 }
 
-func (stepCleanFiles) Cleanup(map[string]interface{}) {}
+func (stepCleanFiles) Cleanup(multistep.StateBag) {}

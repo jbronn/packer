@@ -34,13 +34,11 @@ type config struct {
 	SSHPort      uint   `mapstructure:"ssh_port"`
 
 	RawSSHTimeout   string `mapstructure:"ssh_timeout"`
-	RawEventDelay   string `mapstructure:"event_delay"`
 	RawStateTimeout string `mapstructure:"state_timeout"`
 
 	// These are unexported since they're set by other fields
 	// being set.
 	sshTimeout   time.Duration
-	eventDelay   time.Duration
 	stateTimeout time.Duration
 
 	tpl *packer.ConfigTemplate
@@ -113,12 +111,6 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		b.config.RawSSHTimeout = "1m"
 	}
 
-	if b.config.RawEventDelay == "" {
-		// Default to 5 second delays after creating events
-		// to allow DO to process
-		b.config.RawEventDelay = "5s"
-	}
-
 	if b.config.RawStateTimeout == "" {
 		// Default to 6 minute timeouts waiting for
 		// desired state. i.e waiting for droplet to become active
@@ -131,7 +123,6 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		"snapshot_name": &b.config.SnapshotName,
 		"ssh_username":  &b.config.SSHUsername,
 		"ssh_timeout":   &b.config.RawSSHTimeout,
-		"event_delay":   &b.config.RawEventDelay,
 		"state_timeout": &b.config.RawStateTimeout,
 	}
 
@@ -162,13 +153,6 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 	}
 	b.config.sshTimeout = sshTimeout
 
-	eventDelay, err := time.ParseDuration(b.config.RawEventDelay)
-	if err != nil {
-		errs = packer.MultiErrorAppend(
-			errs, fmt.Errorf("Failed parsing event_delay: %s", err))
-	}
-	b.config.eventDelay = eventDelay
-
 	stateTimeout, err := time.ParseDuration(b.config.RawStateTimeout)
 	if err != nil {
 		errs = packer.MultiErrorAppend(
@@ -189,11 +173,11 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 	client := DigitalOceanClient{}.New(b.config.ClientID, b.config.APIKey)
 
 	// Set up the state
-	state := make(map[string]interface{})
-	state["config"] = b.config
-	state["client"] = client
-	state["hook"] = hook
-	state["ui"] = ui
+	state := new(multistep.BasicStateBag)
+	state.Put("config", b.config)
+	state.Put("client", client)
+	state.Put("hook", hook)
+	state.Put("ui", ui)
 
 	// Build the steps
 	steps := []multistep.Step{
@@ -224,18 +208,18 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 	b.runner.Run(state)
 
 	// If there was an error, return that
-	if rawErr, ok := state["error"]; ok {
+	if rawErr, ok := state.GetOk("error"); ok {
 		return nil, rawErr.(error)
 	}
 
-	if _, ok := state["snapshot_name"]; !ok {
+	if _, ok := state.GetOk("snapshot_name"); !ok {
 		log.Println("Failed to find snapshot_name in state. Bug?")
 		return nil, nil
 	}
 
 	artifact := &Artifact{
-		snapshotName: state["snapshot_name"].(string),
-		snapshotId:   state["snapshot_image_id"].(uint),
+		snapshotName: state.Get("snapshot_name").(string),
+		snapshotId:   state.Get("snapshot_image_id").(uint),
 		client:       client,
 	}
 

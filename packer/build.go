@@ -77,7 +77,7 @@ type coreBuild struct {
 	hooks          map[string][]Hook
 	postProcessors [][]coreBuildPostProcessor
 	provisioners   []coreBuildProvisioner
-	variables      map[string]string
+	variables      map[string]coreBuildVariable
 
 	debug         bool
 	force         bool
@@ -101,6 +101,12 @@ type coreBuildProvisioner struct {
 	config      []interface{}
 }
 
+// A user-variable that is part of a single build.
+type coreBuildVariable struct {
+	Default  string
+	Required bool
+}
+
 // Returns the name of the build.
 func (b *coreBuild) Name() string {
 	return b.name
@@ -120,27 +126,36 @@ func (b *coreBuild) Prepare(userVars map[string]string) (err error) {
 	b.prepareCalled = true
 
 	// Compile the variables
+	varErrs := make([]error, 0)
 	variables := make(map[string]string)
 	for k, v := range b.variables {
-		variables[k] = v
+		variables[k] = v.Default
+
+		if v.Required {
+			if _, ok := userVars[k]; !ok {
+				varErrs = append(varErrs,
+					fmt.Errorf("Required user variable '%s' not set", k))
+			}
+		}
 	}
 
 	if userVars != nil {
-		errs := make([]error, 0)
 		for k, v := range userVars {
 			if _, ok := variables[k]; !ok {
-				errs = append(
-					errs, fmt.Errorf("Unknown user variable: %s", k))
+				varErrs = append(
+					varErrs, fmt.Errorf("Unknown user variable: %s", k))
 				continue
 			}
 
 			variables[k] = v
 		}
+	}
 
-		if len(errs) > 0 {
-			return &MultiError{
-				Errors: errs,
-			}
+	// If there were any problem with variables, return an error right
+	// away because we can't be certain anything else will actually work.
+	if len(varErrs) > 0 {
+		return &MultiError{
+			Errors: varErrs,
 		}
 	}
 
@@ -207,10 +222,12 @@ func (b *coreBuild) Run(originalUi Ui, cache Cache) ([]Artifact, error) {
 			hooks[HookProvision] = make([]Hook, 0, 1)
 		}
 
-		hooks[HookProvision] = append(hooks[HookProvision], &ProvisionHook{provisioners})
+		hooks[HookProvision] = append(hooks[HookProvision], &ProvisionHook{
+			Provisioners: provisioners,
+		})
 	}
 
-	hook := &DispatchHook{hooks}
+	hook := &DispatchHook{Mapping: hooks}
 	artifacts := make([]Artifact, 0, 1)
 
 	// The builder just has a normal Ui, but targetted

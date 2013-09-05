@@ -4,6 +4,7 @@ import (
 	"github.com/mitchellh/multistep"
 	"github.com/mitchellh/packer/packer"
 	"log"
+	"time"
 )
 
 // StepProvision runs the provisioners.
@@ -17,18 +18,36 @@ import (
 //   <nothing>
 type StepProvision struct{}
 
-func (*StepProvision) Run(state map[string]interface{}) multistep.StepAction {
-	comm := state["communicator"].(packer.Communicator)
-	hook := state["hook"].(packer.Hook)
-	ui := state["ui"].(packer.Ui)
+func (*StepProvision) Run(state multistep.StateBag) multistep.StepAction {
+	comm := state.Get("communicator").(packer.Communicator)
+	hook := state.Get("hook").(packer.Hook)
+	ui := state.Get("ui").(packer.Ui)
 
+	// Run the provisioner in a goroutine so we can continually check
+	// for cancellations...
 	log.Println("Running the provision hook")
-	if err := hook.Run(packer.HookProvision, ui, comm, nil); err != nil {
-		state["error"] = err
-		return multistep.ActionHalt
-	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- hook.Run(packer.HookProvision, ui, comm, nil)
+	}()
 
-	return multistep.ActionContinue
+	for {
+		select {
+		case err := <-errCh:
+			if err != nil {
+				state.Put("error", err)
+				return multistep.ActionHalt
+			}
+
+			return multistep.ActionContinue
+		case <-time.After(1 * time.Second):
+			if _, ok := state.GetOk(multistep.StateCancelled); ok {
+				log.Println("Cancelling provisioning due to interrupt...")
+				hook.Cancel()
+				return multistep.ActionHalt
+			}
+		}
+	}
 }
 
-func (*StepProvision) Cleanup(map[string]interface{}) {}
+func (*StepProvision) Cleanup(multistep.StateBag) {}
