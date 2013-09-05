@@ -62,7 +62,7 @@ func (s *stepCreateDisk) Run(state multistep.StateBag) multistep.StepAction {
 	err = driver.VBoxManage(command...)
 	if err != nil {
 		err := fmt.Errorf("Error creating disk controller: %s", err)
-		state["error"] = err
+		state.Put("error", err)
 		ui.Error(err.Error())
 		return multistep.ActionHalt
 	}

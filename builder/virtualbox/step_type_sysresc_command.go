@@ -1,11 +1,9 @@
 package virtualbox
 
 import (
-	"bytes"
 	"fmt"
 	"github.com/mitchellh/multistep"
 	"github.com/mitchellh/packer/packer"
-	"text/template"
 	"time"
 )
 
@@ -22,17 +20,17 @@ import (
 //   <nothing>
 type stepTypeSysRescCommand struct{}
 
-func (s *stepTypeSysRescCommand) Run(state map[string]interface{}) multistep.StepAction {
-	sysresc := state["sysresc_path"].(string)
+func (s *stepTypeSysRescCommand) Run(state multistep.StateBag) multistep.StepAction {
+	sysresc := state.Get("sysresc_path").(string)
 	if sysresc == "" {
 		return multistep.ActionContinue
 	}
 
-	config := state["config"].(*config)
-	driver := state["driver"].(Driver)
-	httpPort := state["http_port"].(uint)
-	ui := state["ui"].(packer.Ui)
-	vmName := state["vmName"].(string)
+	config := state.Get("config").(*config)
+	driver := state.Get("driver").(Driver)
+	httpPort := state.Get("http_port").(uint)
+	ui := state.Get("ui").(packer.Ui)
+	vmName := state.Get("vmName").(string)
 
 	tplData := &bootCommandTemplateData{
 		"10.0.2.2",
@@ -42,11 +40,15 @@ func (s *stepTypeSysRescCommand) Run(state map[string]interface{}) multistep.Ste
 
 	ui.Say("Typing the System Rescue CD command...")
 	for _, command := range config.SysRescCommand {
-		var buf bytes.Buffer
-		t := template.Must(template.New("boot").Parse(command))
-		t.Execute(&buf, tplData)
+		command, err := config.tpl.Process(command, tplData)
+		if err != nil {
+			err := fmt.Errorf("Error preparing boot command: %s", err)
+			state.Put("error", err)
+			ui.Error(err.Error())
+			return multistep.ActionHalt
+		}
 
-		for _, code := range scancodes(buf.String()) {
+		for _, code := range scancodes(command) {
 			if code == "wait" {
 				time.Sleep(1 * time.Second)
 				continue
@@ -64,13 +66,13 @@ func (s *stepTypeSysRescCommand) Run(state map[string]interface{}) multistep.Ste
 
 			// Since typing is sometimes so slow, we check for an interrupt
 			// in between each character.
-			if _, ok := state[multistep.StateCancelled]; ok {
+			if _, ok := state.GetOk(multistep.StateCancelled); ok {
 				return multistep.ActionHalt
 			}
 
 			if err := driver.VBoxManage("controlvm", vmName, "keyboardputscancode", code); err != nil {
 				err := fmt.Errorf("Error sending System Rescue CD command: %s", err)
-				state["error"] = err
+				state.Put("error", err)
 				ui.Error(err.Error())
 				return multistep.ActionHalt
 			}
@@ -80,4 +82,4 @@ func (s *stepTypeSysRescCommand) Run(state map[string]interface{}) multistep.Ste
 	return multistep.ActionContinue
 }
 
-func (*stepTypeSysRescCommand) Cleanup(map[string]interface{}) {}
+func (*stepTypeSysRescCommand) Cleanup(multistep.StateBag) {}

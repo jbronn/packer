@@ -15,15 +15,15 @@ type stepAttachSysResc struct {
         diskPath string
 }
 
-func (s *stepAttachSysResc) Run(state map[string]interface{}) multistep.StepAction {
-	isoPath := state["sysresc_path"].(string)
+func (s *stepAttachSysResc) Run(state multistep.StateBag) multistep.StepAction {
+	isoPath := state.Get("sysresc_path").(string)
 	if isoPath == "" {
 		return multistep.ActionContinue
 	}
 
-        driver := state["driver"].(Driver)
-        ui := state["ui"].(packer.Ui)
-        vmName := state["vmName"].(string)
+	driver := state.Get("driver").(Driver)
+	ui := state.Get("ui").(packer.Ui)
+	vmName := state.Get("vmName").(string)
 
         // Attach the disk to the controller
         attach_command := []string{
@@ -36,7 +36,7 @@ func (s *stepAttachSysResc) Run(state map[string]interface{}) multistep.StepActi
         }
         if err := driver.VBoxManage(attach_command...); err != nil {
                 err := fmt.Errorf("Error attaching ISO: %s", err)
-                state["error"] = err
+		state.Put("error", err)
                 ui.Error(err.Error())
                 return multistep.ActionHalt
         }
@@ -48,7 +48,7 @@ func (s *stepAttachSysResc) Run(state map[string]interface{}) multistep.StepActi
         }
         if err := driver.VBoxManage(modify_command...); err != nil {
                 err := fmt.Errorf("Error modifying VM to boot from System Rescue CD: %s", err)
-                state["error"] = err
+		state.Put("error", err)
                 ui.Error(err.Error())
                 return multistep.ActionHalt
         }
@@ -59,4 +59,4 @@ func (s *stepAttachSysResc) Run(state map[string]interface{}) multistep.StepActi
         return multistep.ActionContinue
 }
 
-func (s *stepAttachSysResc) Cleanup(state map[string]interface{}) {}
+func (s *stepAttachSysResc) Cleanup(state multistep.StateBag) {}
