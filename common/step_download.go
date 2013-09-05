@@ -43,7 +43,7 @@ func (s *StepDownload) Run(state multistep.StateBag) multistep.StepAction {
 
 	// Hack to ignore sysresc_cd download.
 	if s.Url[0] == "" {
-		state[s.ResultKey] = ""
+		state.Put(s.ResultKey, "")
 		return multistep.ActionContinue
 	}
 
