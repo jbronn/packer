@@ -55,15 +55,19 @@ func (s stepCleanVMX) Run(state multistep.StateBag) multistep.StepAction {
 			continue
 		}
 
-		filenameKey := match + ".filename"
+		filenameKey := match + ".fileName"
 		if filename, ok := vmxData[filenameKey]; ok {
 			if filename == isoPath {
 				// Change the CD-ROM device back to auto-detect to eject
-				vmxData[filenameKey] = "auto detect"
-				vmxData[match+".deviceType"] = "cdrom-raw"
+				vmxData[filenameKey] = ""
+				vmxData[match+".deviceType"] = "atapi-cdrom"
+				vmxData[match+".startConnected"] = "False"
 			}
 		}
 	}
+
+	// Purge any boot ordering.
+	delete(vmxData, "bios.bootOrder")
 
 	// Rewrite the VMX
 	if err := WriteVMX(vmxPath, vmxData); err != nil {
