@@ -18,14 +18,15 @@ import (
 // Produces:
 type stepAttachSysResc struct{}
 
-func (stepAttachSysResc) Run(state map[string]interface{}) multistep.StepAction {
-	isoPath := state["sysresc_path"].(string)
+func (stepAttachSysResc) Run(state multistep.StateBag) multistep.StepAction {
+	isoPath := state.Get("sysresc_path").(string)
 	if isoPath == "" {
 		return multistep.ActionContinue
 	}
 
-	ui := state["ui"].(packer.Ui)
-	vmxPath := state["vmx_path"].(string)
+
+	ui := state.Get("ui").(packer.Ui)
+	vmxPath := state.Get("vmx_path").(string)
 
 	ui.Say("Attaching System Rescue CD")
 
@@ -33,7 +34,7 @@ func (stepAttachSysResc) Run(state map[string]interface{}) multistep.StepAction 
 	f, err := os.Open(vmxPath)
 	if err != nil {
 		err := fmt.Errorf("Error opening VMX for reading: %s", err)
-		state["error"] = err
+		state.Put("error", err)
 		ui.Error(err.Error())
 		return multistep.ActionHalt
 	}
@@ -42,7 +43,7 @@ func (stepAttachSysResc) Run(state map[string]interface{}) multistep.StepAction 
 	vmxBytes, err := ioutil.ReadAll(f)
 	if err != nil {
 		err := fmt.Errorf("Error reading contents of VMX: %s", err)
-		state["error"] = err
+		state.Put("error", err)
 		ui.Error(err.Error())
 		return multistep.ActionHalt
 	}
@@ -57,7 +58,7 @@ func (stepAttachSysResc) Run(state map[string]interface{}) multistep.StepAction 
 
 	if err := WriteVMX(vmxPath, vmxData); err != nil {
 		err := fmt.Errorf("Error creating VMX file: %s", err)
-		state["error"] = err
+		state.Put("error", err)
 		ui.Error(err.Error())
 		return multistep.ActionHalt
 	}
@@ -65,4 +66,4 @@ func (stepAttachSysResc) Run(state map[string]interface{}) multistep.StepAction 
 	return multistep.ActionContinue
 }
 
-func (stepAttachSysResc) Cleanup(map[string]interface{}) {}
+func (stepAttachSysResc) Cleanup(multistep.StateBag) {}

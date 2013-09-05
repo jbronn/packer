@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/mitchellh/multistep"
 	"github.com/mitchellh/packer/packer"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 )
