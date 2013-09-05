@@ -6,10 +6,18 @@ BACKWARDS INCOMPATIBILITIES:
   The builder automatically waits for events to go away. Run your templates
   through `packer fix` to get rid of these.
 
+FEATURES:
+
+* New globally available template function: `uuid`. Generates a new random
+  UUID.
+
 IMPROVEMENTS:
 
+* builder/amazon/all: Ability to specify the format of the temporary
+  keypair created. [GH-389]
 * builder/digitalocean: Retry on any pending event errors.
 * builder/openstack: Can now specify a project. [GH-382]
+* builder/virtualbox: Can now attach hard drive over SATA. [GH-391]
 
 BUG FIXES:
 
