@@ -1,4 +1,8 @@
-## 0.3.7 (unreleased)
+## 0.3.8 (unreleased)
+
+
+
+## 0.3.7 (September 9, 2013)
 
 BACKWARDS INCOMPATIBILITIES:
 
@@ -8,19 +12,35 @@ BACKWARDS INCOMPATIBILITIES:
 
 FEATURES:
 
+* **NEW PROVISIONER:** `puppet-masterless`. You can now provision with
+  a masterless Puppet setup. [GH-234]
 * New globally available template function: `uuid`. Generates a new random
   UUID.
+* New globally available template function: `isotime`. Generates the
+  current time in ISO standard format.
+* New Amazon template function: `clean_ami_name`. Substitutes '-' for
+  characters that are illegal to use in an AMI name.
 
 IMPROVEMENTS:
 
 * builder/amazon/all: Ability to specify the format of the temporary
   keypair created. [GH-389]
+* builder/amazon/all: Support the NoDevice flag for block mappings. [GH-396]
 * builder/digitalocean: Retry on any pending event errors.
 * builder/openstack: Can now specify a project. [GH-382]
 * builder/virtualbox: Can now attach hard drive over SATA. [GH-391]
+* provisioner/file: Can now upload directories. [GH-251]
 
 BUG FIXES:
 
+* core: Detect if SCP is not enabled on the other side. [GH-386]
+* builder/amazon/all: When copying AMI to multiple regions, copy
+  the metadata (tags and attributes) as well. [GH-388]
+* builder/amazon/all: Fix panic case where eventually consistent
+  instance state caused an index out of bounds.
+* builder/virtualbox: The `vm_name` setting now properly sets the OVF
+  name of the output. [GH-401]
+* builder/vmware: Autoanswer VMware dialogs. [GH-393]
 * command/inspect: Fix weird output for default values for optional vars.
 
 ## 0.3.6 (September 2, 2013)
