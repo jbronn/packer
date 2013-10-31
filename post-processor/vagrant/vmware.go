@@ -1,12 +1,14 @@
 package vagrant
 
 import (
+	"compress/flate"
 	"fmt"
 	"github.com/mitchellh/packer/common"
 	"github.com/mitchellh/packer/packer"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 type VMwareBoxConfig struct {
@@ -14,7 +16,7 @@ type VMwareBoxConfig struct {
 
 	OutputPath          string `mapstructure:"output"`
 	VagrantfileTemplate string `mapstructure:"vagrantfile_template"`
-	Provider string `mapstructure:"provider"`
+	CompressionLevel    string `mapstructure:"compression_level"`
 
 	tpl *packer.ConfigTemplate
 }
@@ -41,6 +43,7 @@ func (p *VMwareBoxPostProcessor) Configure(raws ...interface{}) error {
 	validates := map[string]*string{
 		"output":               &p.config.OutputPath,
 		"vagrantfile_template": &p.config.VagrantfileTemplate,
+		"compression_level":    &p.config.CompressionLevel,
 	}
 
 	for n, ptr := range validates {
@@ -112,19 +115,23 @@ func (p *VMwareBoxPostProcessor) PostProcess(ui packer.Ui, artifact packer.Artif
 		vf.Close()
 	}
 
-	if p.config.Provider == "" {
-		p.config.Provider = "vmware_desktop"
+	var level int = flate.DefaultCompression
+	if p.config.CompressionLevel != "" {
+		level, err = strconv.Atoi(p.config.CompressionLevel)
+		if err != nil {
+			return nil, false, err
+		}
 	}
 
 	// Create the metadata
-	metadata := map[string]string{"provider": p.config.Provider}
+	metadata := map[string]string{"provider": "vmware_desktop"}
 	if err := WriteMetadata(dir, metadata); err != nil {
 		return nil, false, err
 	}
 
 	// Compress the directory to the given output path
 	ui.Message(fmt.Sprintf("Compressing box..."))
-	if err := DirToBox(outputPath, dir, ui); err != nil {
+	if err := DirToBox(outputPath, dir, ui, level); err != nil {
 		return nil, false, err
 	}
 

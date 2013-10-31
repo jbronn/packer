@@ -1,13 +1,39 @@
 package packer
 
 import (
-	"cgl.tideland.biz/asserts"
 	"io/ioutil"
 	"os"
 	"reflect"
 	"sort"
 	"testing"
 )
+
+func testTemplateComponentFinder() *ComponentFinder {
+	builder := testBuilder()
+	pp := new(TestPostProcessor)
+	provisioner := &MockProvisioner{}
+
+	builderMap := map[string]Builder{
+		"test-builder": builder,
+	}
+
+	ppMap := map[string]PostProcessor{
+		"test-pp": pp,
+	}
+
+	provisionerMap := map[string]Provisioner{
+		"test-prov": provisioner,
+	}
+
+	builderFactory := func(n string) (Builder, error) { return builderMap[n], nil }
+	ppFactory := func(n string) (PostProcessor, error) { return ppMap[n], nil }
+	provFactory := func(n string) (Provisioner, error) { return provisionerMap[n], nil }
+	return &ComponentFinder{
+		Builder:       builderFactory,
+		PostProcessor: ppFactory,
+		Provisioner:   provFactory,
+	}
+}
 
 func TestParseTemplateFile_basic(t *testing.T) {
 	data := `
@@ -67,8 +93,6 @@ func TestParseTemplateFile_stdin(t *testing.T) {
 }
 
 func TestParseTemplate_Basic(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [{"type": "something"}]
@@ -76,14 +100,18 @@ func TestParseTemplate_Basic(t *testing.T) {
 	`
 
 	result, err := ParseTemplate([]byte(data))
-	assert.Nil(err, "should not error")
-	assert.NotNil(result, "template should not be nil")
-	assert.Length(result.Builders, 1, "one builder")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	if result == nil {
+		t.Fatal("should have result")
+	}
+	if len(result.Builders) != 1 {
+		t.Fatalf("bad: %#v", result.Builders)
+	}
 }
 
 func TestParseTemplate_Invalid(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	// Note there is an extra comma below for a purposeful
 	// syntax error in the JSON.
 	data := `
@@ -93,13 +121,15 @@ func TestParseTemplate_Invalid(t *testing.T) {
 	`
 
 	result, err := ParseTemplate([]byte(data))
-	assert.NotNil(err, "should have an error")
-	assert.Nil(result, "should have no result")
+	if err == nil {
+		t.Fatal("shold have error")
+	}
+	if result != nil {
+		t.Fatal("should not have result")
+	}
 }
 
 func TestParseTemplate_InvalidKeys(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	// Note there is an extra comma below for a purposeful
 	// syntax error in the JSON.
 	data := `
@@ -110,13 +140,15 @@ func TestParseTemplate_InvalidKeys(t *testing.T) {
 	`
 
 	result, err := ParseTemplate([]byte(data))
-	assert.NotNil(err, "should have an error")
-	assert.Nil(result, "should have no result")
+	if err == nil {
+		t.Fatal("should have error")
+	}
+	if result != nil {
+		t.Fatal("should not have result")
+	}
 }
 
 func TestParseTemplate_BuilderWithoutType(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [{}]
@@ -124,12 +156,12 @@ func TestParseTemplate_BuilderWithoutType(t *testing.T) {
 	`
 
 	_, err := ParseTemplate([]byte(data))
-	assert.NotNil(err, "should have error")
+	if err == nil {
+		t.Fatal("should have error")
+	}
 }
 
 func TestParseTemplate_BuilderWithNonStringType(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [{
@@ -139,12 +171,12 @@ func TestParseTemplate_BuilderWithNonStringType(t *testing.T) {
 	`
 
 	_, err := ParseTemplate([]byte(data))
-	assert.NotNil(err, "should have error")
+	if err == nil {
+		t.Fatal("should have error")
+	}
 }
 
 func TestParseTemplate_BuilderWithoutName(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [
@@ -156,18 +188,26 @@ func TestParseTemplate_BuilderWithoutName(t *testing.T) {
 	`
 
 	result, err := ParseTemplate([]byte(data))
-	assert.Nil(err, "should not error")
-	assert.NotNil(result, "template should not be nil")
-	assert.Length(result.Builders, 1, "should have one builder")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	if result == nil {
+		t.Fatal("should have result")
+	}
+	if len(result.Builders) != 1 {
+		t.Fatalf("bad: %#v", result.Builders)
+	}
 
 	builder, ok := result.Builders["amazon-ebs"]
-	assert.True(ok, "should have amazon-ebs builder")
-	assert.Equal(builder.Type, "amazon-ebs", "builder should be amazon-ebs")
+	if !ok {
+		t.Fatal("should be ok")
+	}
+	if builder.Type != "amazon-ebs" {
+		t.Fatalf("bad: %#v", builder.Type)
+	}
 }
 
 func TestParseTemplate_BuilderWithName(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [
@@ -180,13 +220,23 @@ func TestParseTemplate_BuilderWithName(t *testing.T) {
 	`
 
 	result, err := ParseTemplate([]byte(data))
-	assert.Nil(err, "should not error")
-	assert.NotNil(result, "template should not be nil")
-	assert.Length(result.Builders, 1, "should have one builder")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	if result == nil {
+		t.Fatal("should have result")
+	}
+	if len(result.Builders) != 1 {
+		t.Fatalf("bad: %#v", result.Builders)
+	}
 
 	builder, ok := result.Builders["bob"]
-	assert.True(ok, "should have bob builder")
-	assert.Equal(builder.Type, "amazon-ebs", "builder should be amazon-ebs")
+	if !ok {
+		t.Fatal("should be ok")
+	}
+	if builder.Type != "amazon-ebs" {
+		t.Fatalf("bad: %#v", builder.Type)
+	}
 
 	RawConfig := builder.RawConfig
 	if RawConfig == nil {
@@ -203,8 +253,6 @@ func TestParseTemplate_BuilderWithName(t *testing.T) {
 }
 
 func TestParseTemplate_BuilderWithConflictingName(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [
@@ -221,12 +269,12 @@ func TestParseTemplate_BuilderWithConflictingName(t *testing.T) {
 	`
 
 	_, err := ParseTemplate([]byte(data))
-	assert.NotNil(err, "should have error")
+	if err == nil {
+		t.Fatal("should have error")
+	}
 }
 
 func TestParseTemplate_Hooks(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 
@@ -239,13 +287,23 @@ func TestParseTemplate_Hooks(t *testing.T) {
 	`
 
 	result, err := ParseTemplate([]byte(data))
-	assert.Nil(err, "should not error")
-	assert.NotNil(result, "template should not be nil")
-	assert.Length(result.Hooks, 1, "should have one hook")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	if result == nil {
+		t.Fatal("should have result")
+	}
+	if len(result.Hooks) != 1 {
+		t.Fatalf("bad: %#v", result.Hooks)
+	}
 
 	hooks, ok := result.Hooks["event"]
-	assert.True(ok, "should have hook")
-	assert.Equal(hooks, []string{"foo", "bar"}, "hooks should be correct")
+	if !ok {
+		t.Fatal("should be okay")
+	}
+	if !reflect.DeepEqual(hooks, []string{"foo", "bar"}) {
+		t.Fatalf("bad: %#v", hooks)
+	}
 }
 
 func TestParseTemplate_PostProcessors(t *testing.T) {
@@ -305,8 +363,6 @@ func TestParseTemplate_PostProcessors(t *testing.T) {
 }
 
 func TestParseTemplate_ProvisionerWithoutType(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [{"type": "foo"}],
@@ -316,12 +372,12 @@ func TestParseTemplate_ProvisionerWithoutType(t *testing.T) {
 	`
 
 	_, err := ParseTemplate([]byte(data))
-	assert.NotNil(err, "should have error")
+	if err == nil {
+		t.Fatal("err should not be nil")
+	}
 }
 
 func TestParseTemplate_ProvisionerWithNonStringType(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [{"type": "foo"}],
@@ -333,12 +389,12 @@ func TestParseTemplate_ProvisionerWithNonStringType(t *testing.T) {
 	`
 
 	_, err := ParseTemplate([]byte(data))
-	assert.NotNil(err, "should have error")
+	if err == nil {
+		t.Fatal("should have error")
+	}
 }
 
 func TestParseTemplate_Provisioners(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [{"type": "foo"}],
@@ -352,11 +408,21 @@ func TestParseTemplate_Provisioners(t *testing.T) {
 	`
 
 	result, err := ParseTemplate([]byte(data))
-	assert.Nil(err, "should not error")
-	assert.NotNil(result, "template should not be nil")
-	assert.Length(result.Provisioners, 1, "should have one provisioner")
-	assert.Equal(result.Provisioners[0].Type, "shell", "provisioner should be shell")
-	assert.NotNil(result.Provisioners[0].RawConfig, "should have raw config")
+	if err != nil {
+		t.Fatal("err: %s", err)
+	}
+	if result == nil {
+		t.Fatal("should have result")
+	}
+	if len(result.Provisioners) != 1 {
+		t.Fatalf("bad: %#v", result.Provisioners)
+	}
+	if result.Provisioners[0].Type != "shell" {
+		t.Fatalf("bad: %#v", result.Provisioners[0].Type)
+	}
+	if result.Provisioners[0].RawConfig == nil {
+		t.Fatal("should have raw config")
+	}
 }
 
 func TestParseTemplate_Variables(t *testing.T) {
@@ -364,7 +430,8 @@ func TestParseTemplate_Variables(t *testing.T) {
 	{
 		"variables": {
 			"foo": "bar",
-			"bar": null
+			"bar": null,
+			"baz": 27
 		},
 
 		"builders": [{"type": "something"}]
@@ -376,7 +443,7 @@ func TestParseTemplate_Variables(t *testing.T) {
 		t.Fatalf("err: %s", err)
 	}
 
-	if result.Variables == nil || len(result.Variables) != 2 {
+	if result.Variables == nil || len(result.Variables) != 3 {
 		t.Fatalf("bad vars: %#v", result.Variables)
 	}
 
@@ -394,6 +461,14 @@ func TestParseTemplate_Variables(t *testing.T) {
 
 	if !result.Variables["bar"].Required {
 		t.Fatal("bar should be required")
+	}
+
+	if result.Variables["baz"].Default != "27" {
+		t.Fatal("default should be empty")
+	}
+
+	if result.Variables["baz"].Required {
+		t.Fatal("baz should not be required")
 	}
 }
 
@@ -415,8 +490,6 @@ func TestParseTemplate_variablesBadDefault(t *testing.T) {
 }
 
 func TestTemplate_BuildNames(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [
@@ -433,16 +506,18 @@ func TestTemplate_BuildNames(t *testing.T) {
 	`
 
 	result, err := ParseTemplate([]byte(data))
-	assert.Nil(err, "should not error")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
 
 	buildNames := result.BuildNames()
 	sort.Strings(buildNames)
-	assert.Equal(buildNames, []string{"bob", "chris"}, "should have proper builds")
+	if !reflect.DeepEqual(buildNames, []string{"bob", "chris"}) {
+		t.Fatalf("bad: %#v", buildNames)
+	}
 }
 
 func TestTemplate_BuildUnknown(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [
@@ -455,16 +530,20 @@ func TestTemplate_BuildUnknown(t *testing.T) {
 	`
 
 	template, err := ParseTemplate([]byte(data))
-	assert.Nil(err, "should not error")
+	if err != nil {
+		t.Fatalf("bad: %s", err)
+	}
 
 	build, err := template.Build("nope", nil)
-	assert.Nil(build, "build should be nil")
-	assert.NotNil(err, "should have error")
+	if build != nil {
+		t.Fatalf("build should be nil: %#v", build)
+	}
+	if err == nil {
+		t.Fatal("should have error")
+	}
 }
 
 func TestTemplate_BuildUnknownBuilder(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [
@@ -477,18 +556,22 @@ func TestTemplate_BuildUnknownBuilder(t *testing.T) {
 	`
 
 	template, err := ParseTemplate([]byte(data))
-	assert.Nil(err, "should not error")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
 
 	builderFactory := func(string) (Builder, error) { return nil, nil }
 	components := &ComponentFinder{Builder: builderFactory}
 	build, err := template.Build("test1", components)
-	assert.Nil(build, "build should be nil")
-	assert.NotNil(err, "should have error")
+	if err == nil {
+		t.Fatal("should have error")
+	}
+	if build != nil {
+		t.Fatalf("bad: %#v", build)
+	}
 }
 
 func TestTemplate_Build_NilBuilderFunc(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [
@@ -507,14 +590,18 @@ func TestTemplate_Build_NilBuilderFunc(t *testing.T) {
 	`
 
 	template, err := ParseTemplate([]byte(data))
-	assert.Nil(err, "should not error")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
 
 	defer func() {
 		p := recover()
-		assert.NotNil(p, "should panic")
+		if p == nil {
+			t.Fatal("should panic")
+		}
 
-		if p != nil {
-			assert.Equal(p.(string), "no builder function", "right panic")
+		if p.(string) != "no builder function" {
+			t.Fatalf("bad panic: %s", p.(string))
 		}
 	}()
 
@@ -522,8 +609,6 @@ func TestTemplate_Build_NilBuilderFunc(t *testing.T) {
 }
 
 func TestTemplate_Build_NilProvisionerFunc(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [
@@ -542,14 +627,18 @@ func TestTemplate_Build_NilProvisionerFunc(t *testing.T) {
 	`
 
 	template, err := ParseTemplate([]byte(data))
-	assert.Nil(err, "should not error")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
 
 	defer func() {
 		p := recover()
-		assert.NotNil(p, "should panic")
+		if p == nil {
+			t.Fatal("should panic")
+		}
 
-		if p != nil {
-			assert.Equal(p.(string), "no provisioner function", "right panic")
+		if p.(string) != "no provisioner function" {
+			t.Fatalf("bad panic: %s", p.(string))
 		}
 	}()
 
@@ -559,8 +648,6 @@ func TestTemplate_Build_NilProvisionerFunc(t *testing.T) {
 }
 
 func TestTemplate_Build_NilProvisionerFunc_WithNoProvisioners(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [
@@ -575,7 +662,9 @@ func TestTemplate_Build_NilProvisionerFunc_WithNoProvisioners(t *testing.T) {
 	`
 
 	template, err := ParseTemplate([]byte(data))
-	assert.Nil(err, "should not error")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
 
 	template.Build("test1", &ComponentFinder{
 		Builder: func(string) (Builder, error) { return nil, nil },
@@ -583,8 +672,6 @@ func TestTemplate_Build_NilProvisionerFunc_WithNoProvisioners(t *testing.T) {
 }
 
 func TestTemplate_Build(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
-
 	data := `
 	{
 		"builders": [
@@ -615,7 +702,9 @@ func TestTemplate_Build(t *testing.T) {
 	}
 
 	template, err := ParseTemplate([]byte(data))
-	assert.Nil(err, "should not error")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
 
 	builder := testBuilder()
 	builderMap := map[string]Builder{
@@ -644,18 +733,40 @@ func TestTemplate_Build(t *testing.T) {
 	// Get the build, verifying we can get it without issue, but also
 	// that the proper builder was looked up and used for the build.
 	build, err := template.Build("test1", components)
-	assert.Nil(err, "should not error")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
 
 	coreBuild, ok := build.(*coreBuild)
-	assert.True(ok, "should be a core build")
-	assert.Equal(coreBuild.builder, builder, "should have the same builder")
-	assert.Equal(coreBuild.builderConfig, expectedConfig, "should have proper config")
-	assert.Equal(len(coreBuild.provisioners), 1, "should have one provisioner")
-	assert.Equal(len(coreBuild.postProcessors), 2, "should have pps")
-	assert.Equal(len(coreBuild.postProcessors[0]), 1, "should have correct number")
-	assert.Equal(len(coreBuild.postProcessors[1]), 2, "should have correct number")
-	assert.False(coreBuild.postProcessors[1][0].keepInputArtifact, "shoule be correct")
-	assert.True(coreBuild.postProcessors[1][1].keepInputArtifact, "shoule be correct")
+	if !ok {
+		t.Fatal("should be ok")
+	}
+	if coreBuild.builder != builder {
+		t.Fatalf("bad: %#v", coreBuild.builder)
+	}
+	if !reflect.DeepEqual(coreBuild.builderConfig, expectedConfig) {
+		t.Fatalf("bad: %#v", coreBuild.builderConfig)
+	}
+	if len(coreBuild.provisioners) != 1 {
+		t.Fatalf("bad: %#v", coreBuild.provisioners)
+	}
+	if len(coreBuild.postProcessors) != 2 {
+		t.Fatalf("bad: %#v", coreBuild.postProcessors)
+	}
+
+	if len(coreBuild.postProcessors[0]) != 1 {
+		t.Fatalf("bad: %#v", coreBuild.postProcessors[0])
+	}
+	if len(coreBuild.postProcessors[1]) != 2 {
+		t.Fatalf("bad: %#v", coreBuild.postProcessors[1])
+	}
+
+	if coreBuild.postProcessors[1][0].keepInputArtifact {
+		t.Fatal("postProcessors[1][0] should not keep input artifact")
+	}
+	if !coreBuild.postProcessors[1][1].keepInputArtifact {
+		t.Fatal("postProcessors[1][1] should keep input artifact")
+	}
 
 	config := coreBuild.postProcessors[1][1].config
 	if _, ok := config["keep_input_artifact"]; ok {
@@ -663,9 +774,387 @@ func TestTemplate_Build(t *testing.T) {
 	}
 }
 
-func TestTemplate_Build_ProvisionerOverride(t *testing.T) {
-	assert := asserts.NewTestingAsserts(t, true)
+func TestTemplateBuild_exceptOnlyPP(t *testing.T) {
+	data := `
+	{
+		"builders": [
+			{
+				"name": "test1",
+				"type": "test-builder"
+			},
+			{
+				"name": "test2",
+				"type": "test-builder"
+			}
+		],
 
+		"post-processors": [
+			{
+				"type": "test-pp",
+				"except": ["test1"],
+				"only": ["test1"]
+			}
+		]
+	}
+	`
+
+	_, err := ParseTemplate([]byte(data))
+	if err == nil {
+		t.Fatal("should have error")
+	}
+}
+
+func TestTemplateBuild_exceptOnlyProv(t *testing.T) {
+	data := `
+	{
+		"builders": [
+			{
+				"name": "test1",
+				"type": "test-builder"
+			},
+			{
+				"name": "test2",
+				"type": "test-builder"
+			}
+		],
+
+		"provisioners": [
+			{
+				"type": "test-prov",
+				"except": ["test1"],
+				"only": ["test1"]
+			}
+		]
+	}
+	`
+
+	_, err := ParseTemplate([]byte(data))
+	if err == nil {
+		t.Fatal("should have error")
+	}
+}
+
+func TestTemplateBuild_exceptPPInvalid(t *testing.T) {
+	data := `
+	{
+		"builders": [
+			{
+				"name": "test1",
+				"type": "test-builder"
+			},
+			{
+				"name": "test2",
+				"type": "test-builder"
+			}
+		],
+
+		"post-processors": [
+			{
+				"type": "test-pp",
+				"except": ["test5"]
+			}
+		]
+	}
+	`
+
+	_, err := ParseTemplate([]byte(data))
+	if err == nil {
+		t.Fatal("should have error")
+	}
+}
+
+func TestTemplateBuild_exceptPP(t *testing.T) {
+	data := `
+	{
+		"builders": [
+			{
+				"name": "test1",
+				"type": "test-builder"
+			},
+			{
+				"name": "test2",
+				"type": "test-builder"
+			}
+		],
+
+		"post-processors": [
+			{
+				"type": "test-pp",
+				"except": ["test1"]
+			}
+		]
+	}
+	`
+
+	template, err := ParseTemplate([]byte(data))
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	// Verify test1 has no post-processors
+	build, err := template.Build("test1", testTemplateComponentFinder())
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	cbuild := build.(*coreBuild)
+	if len(cbuild.postProcessors) > 0 {
+		t.Fatal("should have no postProcessors")
+	}
+
+	// Verify test2 has no post-processors
+	build, err = template.Build("test2", testTemplateComponentFinder())
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	cbuild = build.(*coreBuild)
+	if len(cbuild.postProcessors) != 1 {
+		t.Fatalf("invalid: %d", len(cbuild.postProcessors))
+	}
+}
+
+func TestTemplateBuild_exceptProvInvalid(t *testing.T) {
+	data := `
+	{
+		"builders": [
+			{
+				"name": "test1",
+				"type": "test-builder"
+			},
+			{
+				"name": "test2",
+				"type": "test-builder"
+			}
+		],
+
+		"provisioners": [
+			{
+				"type": "test-prov",
+				"except": ["test5"]
+			}
+		]
+	}
+	`
+
+	_, err := ParseTemplate([]byte(data))
+	if err == nil {
+		t.Fatal("should have error")
+	}
+}
+
+func TestTemplateBuild_exceptProv(t *testing.T) {
+	data := `
+	{
+		"builders": [
+			{
+				"name": "test1",
+				"type": "test-builder"
+			},
+			{
+				"name": "test2",
+				"type": "test-builder"
+			}
+		],
+
+		"provisioners": [
+			{
+				"type": "test-prov",
+				"except": ["test1"]
+			}
+		]
+	}
+	`
+
+	template, err := ParseTemplate([]byte(data))
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	// Verify test1 has no provisioners
+	build, err := template.Build("test1", testTemplateComponentFinder())
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	cbuild := build.(*coreBuild)
+	if len(cbuild.provisioners) > 0 {
+		t.Fatal("should have no provisioners")
+	}
+
+	// Verify test2 has no provisioners
+	build, err = template.Build("test2", testTemplateComponentFinder())
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	cbuild = build.(*coreBuild)
+	if len(cbuild.provisioners) != 1 {
+		t.Fatalf("invalid: %d", len(cbuild.provisioners))
+	}
+}
+
+func TestTemplateBuild_onlyPPInvalid(t *testing.T) {
+	data := `
+	{
+		"builders": [
+			{
+				"name": "test1",
+				"type": "test-builder"
+			},
+			{
+				"name": "test2",
+				"type": "test-builder"
+			}
+		],
+
+		"post-processors": [
+			{
+				"type": "test-pp",
+				"only": ["test5"]
+			}
+		]
+	}
+	`
+
+	_, err := ParseTemplate([]byte(data))
+	if err == nil {
+		t.Fatal("should have error")
+	}
+}
+
+func TestTemplateBuild_onlyPP(t *testing.T) {
+	data := `
+	{
+		"builders": [
+			{
+				"name": "test1",
+				"type": "test-builder"
+			},
+			{
+				"name": "test2",
+				"type": "test-builder"
+			}
+		],
+
+		"post-processors": [
+			{
+				"type": "test-pp",
+				"only": ["test2"]
+			}
+		]
+	}
+	`
+
+	template, err := ParseTemplate([]byte(data))
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	// Verify test1 has no post-processors
+	build, err := template.Build("test1", testTemplateComponentFinder())
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	cbuild := build.(*coreBuild)
+	if len(cbuild.postProcessors) > 0 {
+		t.Fatal("should have no postProcessors")
+	}
+
+	// Verify test2 has no post-processors
+	build, err = template.Build("test2", testTemplateComponentFinder())
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	cbuild = build.(*coreBuild)
+	if len(cbuild.postProcessors) != 1 {
+		t.Fatalf("invalid: %d", len(cbuild.postProcessors))
+	}
+}
+
+func TestTemplateBuild_onlyProvInvalid(t *testing.T) {
+	data := `
+	{
+		"builders": [
+			{
+				"name": "test1",
+				"type": "test-builder"
+			},
+			{
+				"name": "test2",
+				"type": "test-builder"
+			}
+		],
+
+		"provisioners": [
+			{
+				"type": "test-prov",
+				"only": ["test5"]
+			}
+		]
+	}
+	`
+
+	_, err := ParseTemplate([]byte(data))
+	if err == nil {
+		t.Fatal("should have error")
+	}
+}
+
+func TestTemplateBuild_onlyProv(t *testing.T) {
+	data := `
+	{
+		"builders": [
+			{
+				"name": "test1",
+				"type": "test-builder"
+			},
+			{
+				"name": "test2",
+				"type": "test-builder"
+			}
+		],
+
+		"provisioners": [
+			{
+				"type": "test-prov",
+				"only": ["test2"]
+			}
+		]
+	}
+	`
+
+	template, err := ParseTemplate([]byte(data))
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	// Verify test1 has no provisioners
+	build, err := template.Build("test1", testTemplateComponentFinder())
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	cbuild := build.(*coreBuild)
+	if len(cbuild.provisioners) > 0 {
+		t.Fatal("should have no provisioners")
+	}
+
+	// Verify test2 has no provisioners
+	build, err = template.Build("test2", testTemplateComponentFinder())
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	cbuild = build.(*coreBuild)
+	if len(cbuild.provisioners) != 1 {
+		t.Fatalf("invalid: %d", len(cbuild.provisioners))
+	}
+}
+
+func TestTemplate_Build_ProvisionerOverride(t *testing.T) {
 	data := `
 	{
 		"builders": [
@@ -725,12 +1214,20 @@ func TestTemplate_Build_ProvisionerOverride(t *testing.T) {
 	// Get the build, verifying we can get it without issue, but also
 	// that the proper builder was looked up and used for the build.
 	build, err := template.Build("test1", components)
-	assert.Nil(err, "should not error")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
 
 	coreBuild, ok := build.(*coreBuild)
-	assert.True(ok, "should be a core build")
-	assert.Equal(len(coreBuild.provisioners), 1, "should have one provisioner")
-	assert.Equal(len(coreBuild.provisioners[0].config), 2, "should have two configs on the provisioner")
+	if !ok {
+		t.Fatal("should be okay")
+	}
+	if len(coreBuild.provisioners) != 1 {
+		t.Fatalf("bad: %#v", coreBuild.provisioners)
+	}
+	if len(coreBuild.provisioners[0].config) != 2 {
+		t.Fatalf("bad: %#v", coreBuild.provisioners[0].config)
+	}
 }
 
 func TestTemplate_Build_ProvisionerOverrideBad(t *testing.T) {

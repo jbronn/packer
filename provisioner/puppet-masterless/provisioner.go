@@ -69,7 +69,7 @@ func (p *Provisioner) Prepare(raws ...interface{}) error {
 
 	// Set some defaults
 	if p.config.ExecuteCommand == "" {
-		p.config.ExecuteCommand = "{{.FacterVars}}{{if .Sudo}} sudo -E {{end}}" +
+		p.config.ExecuteCommand = "{{.FacterVars}} {{if .Sudo}} sudo -E {{end}}" +
 			"puppet apply --verbose --modulepath='{{.ModulePath}}' " +
 			"{{if .HasHieraConfigPath}}--hiera_config='{{.HieraConfigPath}}' {{end}}" +
 			"--detailed-exitcodes " +
@@ -82,7 +82,9 @@ func (p *Provisioner) Prepare(raws ...interface{}) error {
 
 	// Templates
 	templates := map[string]*string{
-		"staging_dir": &p.config.StagingDir,
+		"hiera_config_path": &p.config.HieraConfigPath,
+		"manifest_file":     &p.config.ManifestFile,
+		"staging_dir":       &p.config.StagingDir,
 	}
 
 	for n, ptr := range templates {
@@ -215,7 +217,6 @@ func (p *Provisioner) Provision(ui packer.Ui, comm packer.Communicator) error {
 	}
 
 	// Upload manifests
-	ui.Message("Uploading manifests...")
 	remoteManifestFile, err := p.uploadManifests(ui, comm)
 	if err != nil {
 		return fmt.Errorf("Error uploading manifests: %s", err)

@@ -18,6 +18,12 @@ it raises the chances we can quickly merge or address your contributions.
 * Make sure you test against the latest released version. It is possible
   we already fixed the bug you're experiencing.
 
+* Run the command with debug ouput with the environment variable
+  `PACKER_LOG`. For example: `PACKER_LOG=1 packer build template.json`. Take
+  the *entire* output and create a [gist](https://gist.github.com) for linking
+  to in your issue. Packer should strip sensitive keys from the output,
+  but take a look through just in case.
+
 * Provide a reproducible test case. If a contributor can't reproduce an
   issue, then it dramatically lowers the chances it'll get fixed. And in
   some cases, the issue will eventually be closed.
@@ -47,7 +53,9 @@ it raises the chances we can quickly merge or address your contributions.
 If you have never worked with Go before, you will have to complete the
 following steps in order to be able to compile and test Packer.
 
-1. Install Go. On a Mac, you can `brew install go`.
+1. Install Go. On a Mac, you can `brew install go`. Make sure the Go
+   version is at least Go 1.1. Packer will not work with anything less than
+   Go 1.1.
 
 2. Set and export the `GOPATH` environment variable. For example, you can
    add `export GOPATH=$HOME/Documents/golang` to your `.bash_profile`.

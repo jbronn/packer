@@ -11,8 +11,15 @@ import (
 )
 
 // A driver is able to talk to VirtualBox and perform certain
-// operations with it.
+// operations with it. Some of the operations on here may seem overly
+// specific, but they were built specifically in mind to handle features
+// of the VirtualBox builder for Packer, and to abstract differences in
+// versions out of the builder steps, so sometimes the methods are
+// extremely specific.
 type Driver interface {
+	// Create a SATA controller.
+	CreateSATAController(vm string, controller string) error
+
 	// Checks if the VM with the given name is running.
 	IsRunning(string) (bool, error)
 
@@ -38,6 +45,27 @@ type Driver interface {
 type VBox42Driver struct {
 	// This is the path to the "VBoxManage" application.
 	VBoxManagePath string
+}
+
+func (d *VBox42Driver) CreateSATAController(vmName string, name string) error {
+	version, err := d.Version()
+	if err != nil {
+		return err
+	}
+
+	portCountArg := "--sataportcount"
+	if strings.HasPrefix(version, "4.3") {
+		portCountArg = "--portcount"
+	}
+
+	command := []string{
+		"storagectl", vmName,
+		"--name", name,
+		"--add", "sata",
+		portCountArg, "1",
+	}
+
+	return d.VBoxManage(command...)
 }
 
 func (d *VBox42Driver) IsRunning(name string) (bool, error) {
@@ -135,9 +163,17 @@ func (d *VBox42Driver) Version() (string, error) {
 
 	versionOutput := strings.TrimSpace(stdout.String())
 	log.Printf("VBoxManage --version output: %s", versionOutput)
+
+	// If the "--version" output contains vboxdrv, then this is indicative
+	// of problems with the VirtualBox setup and we shouldn't really continue,
+	// whether or not we can read the version.
+	if strings.Contains(versionOutput, "vboxdrv") {
+		return "", fmt.Errorf("VirtualBox is not properly setup: %s", versionOutput)
+	}
+
 	versionRe := regexp.MustCompile("[^.0-9]")
 	matches := versionRe.Split(versionOutput, 2)
-	if len(matches) == 0 {
+	if len(matches) == 0 || matches[0] == "" {
 		return "", fmt.Errorf("No version found: %s", versionOutput)
 	}
 

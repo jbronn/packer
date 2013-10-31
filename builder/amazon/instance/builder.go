@@ -83,7 +83,7 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 			"-u {{.AccountId}} " +
 			"-c {{.CertPath}} " +
 			"-r {{.Architecture}} " +
-			"-e {{.PrivatePath}} " +
+			"-e {{.PrivatePath}}/* " +
 			"-d {{.Destination}} " +
 			"-p {{.Prefix}} " +
 			"--batch"
@@ -159,7 +159,7 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		return errs
 	}
 
-	log.Printf("Config: %+v", b.config)
+	log.Println(common.ScrubConfig(b.config), b.config.AccessKey, b.config.SecretKey)
 	return nil
 }
 
@@ -204,6 +204,7 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 			UserDataFile:       b.config.UserDataFile,
 			SourceAMI:          b.config.SourceAmi,
 			SubnetId:           b.config.SubnetId,
+			AvailabilityZone:   b.config.AvailabilityZone,
 			BlockDevices:       b.config.BlockDevices,
 		},
 		&common.StepConnectSSH{

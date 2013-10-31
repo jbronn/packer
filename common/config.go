@@ -12,6 +12,16 @@ import (
 	"strings"
 )
 
+// ScrubConfig is a helper that returns a string representation of
+// any struct with the given values stripped out.
+func ScrubConfig(target interface{}, values ...string) string {
+	conf := fmt.Sprintf("Config: %+v", target)
+	for _, value := range values {
+		conf = strings.Replace(conf, value, "<Filtered>", -1)
+	}
+	return conf
+}
+
 // CheckUnusedConfig is a helper that makes sure that the there are no
 // unused configuration keys, properly ignoring keys that don't matter.
 func CheckUnusedConfig(md *mapstructure.Metadata) *packer.MultiError {
@@ -41,8 +51,9 @@ func CheckUnusedConfig(md *mapstructure.Metadata) *packer.MultiError {
 func DecodeConfig(target interface{}, raws ...interface{}) (*mapstructure.Metadata, error) {
 	var md mapstructure.Metadata
 	decoderConfig := &mapstructure.DecoderConfig{
-		Metadata: &md,
-		Result:   target,
+		Metadata:         &md,
+		Result:           target,
+		WeaklyTypedInput: true,
 	}
 
 	decoder, err := mapstructure.NewDecoder(decoderConfig)
